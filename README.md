@@ -34,10 +34,10 @@ The bot can be run in several modes:
 python -m src.main --mode live --symbol SPY
 
 # Backtest mode
-python -m src.main --mode backtest --symbol SPY --start-date 2024-01-01 --end-date 2024-01-31
+python -m src.main --mode backtest --symbol QQQ --start-date 2025-01-12 --end-date 2025-01-26 --provider deepseek
 
 # Single analysis
-python -m src.main --mode oneshot --symbol SPY
+python -m src.main --mode oneshot --symbol QQQ --prompt-type fvg
 
 # Dashboard mode (default)
 python -m src.main --mode dashboard --symbol SPY
