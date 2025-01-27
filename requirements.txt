@@ -1,0 +1,13 @@
+python-dotenv==1.0.0
+openai==1.12.0
+anthropic==0.8.1
+pandas==2.2.0
+numpy==1.26.3
+yfinance==0.2.36
+plotly==5.18.0
+dash==2.14.2
+dash-bootstrap-components==1.5.0
+ccxt==4.2.15
+pytest==8.0.0
+python-binance==1.0.19 
+python-dotenv>=1.0.0
