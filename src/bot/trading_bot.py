@@ -65,7 +65,6 @@ class TradingBot:
         """
         try:
             return await self.data_fetcher.get_candles(
-                symbol=self.symbol,
                 interval="1m",
                 start_time=start_time,
                 end_time=end_time

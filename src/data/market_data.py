@@ -271,6 +271,25 @@ class MarketDataFetcher:
         self.et_tz = pytz.timezone('US/Eastern')
         self.provider = YFinanceProvider()
         
+    async def get_candles(
+        self,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        interval: str = "1m"
+    ) -> pd.DataFrame:
+        """Get OHLCV candles for the symbol.
+        
+        Args:
+            start_time: Start time for data fetch
+            end_time: End time for data fetch
+            interval: Candle interval (1m, 5m, 15m, 1h)
+            
+        Returns:
+            DataFrame with OHLCV data
+        """
+        self.logger.info(f"Fetching {interval} candles for {self.symbol} from {start_time} to {end_time}")
+        return await self.provider.get_candles(self.symbol, interval, start_time, end_time)
+        
     async def fetch_multi_timeframe_data(
         self,
         end_time: Optional[datetime] = None
@@ -291,7 +310,7 @@ class MarketDataFetcher:
         except Exception as e:
             self.logger.error(f"Error fetching multi-timeframe data: {str(e)}")
             raise ValueError(f"No data available for {self.symbol}")
-
+            
     @staticmethod
     def detect_asset_type(symbol: str) -> str:
         """Detect asset type from symbol."""
