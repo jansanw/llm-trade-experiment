@@ -44,18 +44,23 @@ class PromptV0(BasePromptGenerator):
             summary += f"- Volume trend: {volume_trend}\n"
             summaries.append(summary)
             
+        current_price = min1_df.iloc[-1]['close']
         prompt = "You are a professional futures trader. Analyze the following market data and provide a trading decision.\n\n"
+        prompt += f"Current Price: {current_price:.2f}\n\n"
         prompt += "Market Data:\n"
         prompt += "\n".join(f"{i+1}. Last 100 {summary}" for i, summary in enumerate(summaries))
         
         if additional_context:
             prompt += f"\nAdditional Context:\n{additional_context}\n"
             
-        prompt += "\nBased on this data, should we go long or short? Provide:\n"
+        prompt += "\nBased on this data, provide a complete trading plan including:\n"
         prompt += "1. Position (-1.0 for full short to 1.0 for full long)\n"
         prompt += "2. Confidence level (0.0 to 1.0)\n"
-        prompt += "3. Brief explanation of your reasoning\n\n"
-        prompt += "Format your response as a JSON object with keys: position, confidence, reasoning"
+        prompt += "3. Take-profit price level\n"
+        prompt += "4. Stop-loss price level\n"
+        prompt += "5. Brief explanation of your reasoning\n\n"
+        prompt += "Format your response as a JSON object with keys: position, confidence, take_profit, stop_loss, reasoning\n"
+        prompt += "Note: take_profit and stop_loss should be absolute price levels based on the current price of " + f"{current_price:.2f}"
         
         return prompt
 
@@ -149,10 +154,15 @@ class PromptFVG(BasePromptGenerator):
         if additional_context:
             prompt += f"\nAdditional Context:\n{additional_context}\n"
         
-        prompt += "\nBased on the fair value gaps and current price, provide a trading decision:\n"
+        prompt += "\nBased on the fair value gaps and current price, provide a complete trading plan:\n"
         prompt += "1. Position (-1.0 for full short to 1.0 for full long)\n"
         prompt += "2. Confidence level (0.0 to 1.0)\n"
-        prompt += "3. Brief explanation of your reasoning, specifically mentioning which gaps are most relevant\n\n"
-        prompt += "Format your response as a JSON object with keys: position, confidence, reasoning"
+        prompt += "3. Take-profit price level - consider using relevant FVG levels\n"
+        prompt += "4. Stop-loss price level - consider using the opposite side of relevant FVGs\n"
+        prompt += "5. Brief explanation of your reasoning, specifically mentioning:\n"
+        prompt += "   - Which gaps are most relevant for entry\n"
+        prompt += "   - Which gaps are being used for take-profit/stop-loss levels\n\n"
+        prompt += "Format your response as a JSON object with keys: position, confidence, take_profit, stop_loss, reasoning\n"
+        prompt += "Note: take_profit and stop_loss should be absolute price levels based on the current price of " + f"{current_price:.2f}"
         
         return prompt 

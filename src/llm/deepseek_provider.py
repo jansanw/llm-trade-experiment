@@ -143,7 +143,7 @@ class DeepSeekProvider(LLMProvider):
                         decision = json.loads(json_str)
                         
                         # Validate decision format
-                        required_keys = ["position", "confidence", "reasoning"]
+                        required_keys = ["position", "confidence", "take_profit", "stop_loss", "reasoning"]
                         if not all(key in decision for key in required_keys):
                             raise ValueError(f"Missing required keys in decision: {required_keys}")
                         
@@ -152,6 +152,26 @@ class DeepSeekProvider(LLMProvider):
                             raise ValueError(f"Position value out of range: {decision['position']}")
                         if not 0.0 <= float(decision["confidence"]) <= 1.0:
                             raise ValueError(f"Confidence value out of range: {decision['confidence']}")
+                        
+                        # Validate take-profit and stop-loss are numeric
+                        try:
+                            decision["take_profit"] = float(decision["take_profit"])
+                            decision["stop_loss"] = float(decision["stop_loss"])
+                        except (ValueError, TypeError):
+                            raise ValueError("take_profit and stop_loss must be numeric values")
+                        
+                        # Validate take-profit and stop-loss make sense for the position
+                        current_price = float(min1_df.iloc[-1]['close'])
+                        if decision["position"] > 0:  # Long position
+                            if decision["take_profit"] <= current_price:
+                                raise ValueError("take_profit must be above current price for long positions")
+                            if decision["stop_loss"] >= current_price:
+                                raise ValueError("stop_loss must be below current price for long positions")
+                        elif decision["position"] < 0:  # Short position
+                            if decision["take_profit"] >= current_price:
+                                raise ValueError("take_profit must be below current price for short positions")
+                            if decision["stop_loss"] <= current_price:
+                                raise ValueError("stop_loss must be above current price for short positions")
                         
                         self.logger.info(f"Final decision: {decision}")
                         return decision

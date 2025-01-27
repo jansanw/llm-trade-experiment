@@ -121,6 +121,8 @@ async def main():
         print("-" * 50)
         print(f"Position: {'LONG' if decision['position'] > 0 else 'SHORT' if decision['position'] < 0 else 'NEUTRAL'}")
         print(f"Size: {abs(decision['position']):.2f}")
+        print(f"take-profit: {abs(decision['take_profit']):.2f}")
+        print(f"stop-loss: {abs(decision['stop_loss']):.2f}")
         print(f"Confidence: {decision['confidence']:.1%}")
         print(f"\nReasoning:\n{decision['reasoning']}")
         print("-" * 50)
