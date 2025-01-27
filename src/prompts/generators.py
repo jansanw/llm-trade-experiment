@@ -320,68 +320,93 @@ class PromptFVG(BasePromptGenerator):
         current_price = min1_df.iloc[-1]['close']
         current_time = min1_df.iloc[-1]['timestamp'].strftime('%Y-%m-%d %H:%M')
         
-        prompt = "You are a professional futures trader specializing in ICT concepts and fair value gaps (FVG) analysis.\n\n"
+        prompt = "You are a professional futures trader specializing in ICT concepts and market structure analysis.\n\n"
         prompt += f"Current Time: {current_time}\n"
         prompt += f"Current Price: {current_price:.2f}\n\n"
         
-        # Add unified swing points
-        prompt += "Market Structure (Swing Points):\n"
+        # Add market structure analysis
+        prompt += "Market Structure Analysis:\n"
+        
+        # Add swing points with context
         swing_highs, swing_lows = self._find_unified_swings(hourly_df, min15_df, min5_df, min1_df)
         
         if not swing_highs.empty:
-            prompt += "\nSwing Highs (Highest to Lowest):\n"
+            prompt += "\nKey Resistance Levels (Swing Highs):\n"
             for _, high in swing_highs.iterrows():
                 timestamp_str = high['timestamp'].strftime('%Y-%m-%d %H:%M')
-                prompt += f"- {timestamp_str}: {high['price']:.2f}\n"
+                distance = ((high['price'] - current_price) / current_price) * 100
+                prompt += f"- {high['price']:.2f} ({distance:+.2f}% from current price) formed at {timestamp_str}\n"
                 
         if not swing_lows.empty:
-            prompt += "\nSwing Lows (Lowest to Highest):\n"
+            prompt += "\nKey Support Levels (Swing Lows):\n"
             for _, low in swing_lows.iterrows():
                 timestamp_str = low['timestamp'].strftime('%Y-%m-%d %H:%M')
-                prompt += f"- {timestamp_str}: {low['price']:.2f}\n"
+                distance = ((low['price'] - current_price) / current_price) * 100
+                prompt += f"- {low['price']:.2f} ({distance:+.2f}% from current price) formed at {timestamp_str}\n"
         
-        # Add FVGs
-        prompt += "\nFair Value Gaps (Only showing active, non-invalidated gaps):\n"
-        prompt += "For each gap, you have: timestamp, gap_low, gap_high.\n\n"
-        
-        for name, df in [
-            ("Hourly", hourly_df),
-            ("15min", min15_df),
-            ("5min", min5_df),
-            ("1min", min1_df)
-        ]:
+        # Add trend analysis
+        prompt += "\nTrend Analysis:\n"
+        for name, df in [("Hourly", hourly_df), ("15min", min15_df), ("5min", min5_df)]:
+            if df.empty:
+                continue
+            recent = df.tail(10)
+            price_change = ((recent.iloc[-1]['close'] - recent.iloc[0]['close']) / recent.iloc[0]['close']) * 100
+            ema20 = df['close'].ewm(span=20).mean().iloc[-1]
+            ema50 = df['close'].ewm(span=50).mean().iloc[-1]
+            
+            trend = "Bullish" if ema20 > ema50 else "Bearish"
+            prompt += f"\n{name} Timeframe:\n"
+            prompt += f"- Price change last 10 periods: {price_change:+.2f}%\n"
+            prompt += f"- EMA trend: {trend} (EMA20: {ema20:.2f} vs EMA50: {ema50:.2f})\n"
+            
+        # Add volume analysis
+        prompt += "\nVolume Analysis:\n"
+        for name, df in [("Hourly", hourly_df), ("15min", min15_df)]:
+            if df.empty:
+                continue
+            recent_vol = df['volume'].tail(10)
+            avg_vol = recent_vol.mean()
+            last_vol = recent_vol.iloc[-1]
+            vol_change = ((last_vol - avg_vol) / avg_vol) * 100
+            prompt += f"\n{name} Volume:\n"
+            prompt += f"- Current vs 10-period average: {vol_change:+.2f}%\n"
+            
+        # Add active FVGs
+        prompt += "\nFair Value Gaps (Active & Non-invalidated):\n"
+        for name, df in [("Hourly", hourly_df), ("15min", min15_df), ("5min", min5_df)]:
             bullish_gaps = self._find_fvg(df, bullish=True)
             bearish_gaps = self._find_fvg(df, bullish=False)
             
-            prompt += f"\n{name} Timeframe FVGs:\n"
-            if bullish_gaps.empty and bearish_gaps.empty:
-                prompt += "No active fair value gaps found\n"
-                continue
-            
-            if not bullish_gaps.empty:
-                prompt += "\nBullish Gaps:\n"
-                for _, gap in bullish_gaps.iterrows():
-                    timestamp_str = gap['timestamp'].strftime('%Y-%m-%d %H:%M')
-                    prompt += f"- {timestamp_str}: {gap['gap_low']:.2f} to {gap['gap_high']:.2f}\n"
-            
-            if not bearish_gaps.empty:
-                prompt += "\nBearish Gaps:\n"
-                for _, gap in bearish_gaps.iterrows():
-                    timestamp_str = gap['timestamp'].strftime('%Y-%m-%d %H:%M')
-                    prompt += f"- {timestamp_str}: {gap['gap_low']:.2f} to {gap['gap_high']:.2f}\n"
+            if not bullish_gaps.empty or not bearish_gaps.empty:
+                prompt += f"\n{name} Timeframe FVGs:\n"
                 
+                if not bullish_gaps.empty:
+                    prompt += "\nBullish Gaps (Potential Support):\n"
+                    for _, gap in bullish_gaps.iterrows():
+                        timestamp_str = gap['timestamp'].strftime('%Y-%m-%d %H:%M')
+                        distance = ((gap['gap_low'] - current_price) / current_price) * 100
+                        prompt += f"- {gap['gap_low']:.2f} to {gap['gap_high']:.2f} ({distance:+.2f}% from current price) formed at {timestamp_str}\n"
+                
+                if not bearish_gaps.empty:
+                    prompt += "\nBearish Gaps (Potential Resistance):\n"
+                    for _, gap in bearish_gaps.iterrows():
+                        timestamp_str = gap['timestamp'].strftime('%Y-%m-%d %H:%M')
+                        distance = ((gap['gap_low'] - current_price) / current_price) * 100
+                        prompt += f"- {gap['gap_low']:.2f} to {gap['gap_high']:.2f} ({distance:+.2f}% from current price) formed at {timestamp_str}\n"
+        
         if additional_context:
             prompt += f"\nAdditional Context:\n{additional_context}\n"
         
-        prompt += "\nBased on ICT concepts, market structure, and fair value gaps, provide a complete trading plan:\n"
+        prompt += "\nBased on the above market structure analysis, provide a detailed trading plan:\n"
         prompt += "1. Position (-1.0 for full short to 1.0 for full long)\n"
         prompt += "2. Confidence level (0.0 to 1.0)\n"
-        prompt += "3. Take-profit price level - use market structure\n"
-        prompt += "4. Stop-loss price level - use market structure\n"
-        prompt += "5. Brief explanation of your reasoning, specifically mentioning:\n"
-        prompt += "   - Which market structure levels are relevant\n"
-        prompt += "   - Which FVGs are being used for entry/exit levels\n"
-        prompt += "   - Any relevant ICT concepts (liquidity, breaker blocks, etc.)\n\n"
+        prompt += "3. Take-profit price - use nearest significant resistance for longs or support for shorts\n"
+        prompt += "4. Stop-loss price - use market structure (swings/FVGs) to define invalidation level\n"
+        prompt += "5. Detailed reasoning including:\n"
+        prompt += "   - Primary market structure levels being used\n"
+        prompt += "   - How the multi-timeframe trend aligns with the trade\n"
+        prompt += "   - Volume confirmation/concerns\n"
+        prompt += "   - Risk:reward ratio justification\n\n"
         prompt += "Format your response as a JSON object with keys: position, confidence, take_profit, stop_loss, reasoning\n"
         prompt += "Note: take_profit and stop_loss should be absolute price levels based on the current price of " + f"{current_price:.2f}"
         
