@@ -4,6 +4,7 @@ import aiohttp
 import pandas as pd
 from typing import Dict, Optional
 from .base import LLMProvider
+from src.prompts.generators import BasePromptGenerator, PromptV0, PromptFVG
 
 # Configure logging to ignore DEBUG from other libraries
 logging.getLogger('yfinance').setLevel(logging.WARNING)
@@ -12,15 +13,17 @@ logging.getLogger('peewee').setLevel(logging.WARNING)
 class DeepSeekProvider(LLMProvider):
     """DeepSeek implementation of the LLM provider."""
     
-    def __init__(self, api_key: str, dry_run: bool = False):
+    def __init__(self, api_key: str, dry_run: bool = False, prompt_generator: Optional[BasePromptGenerator] = None):
         """Initialize provider with API key.
         
         Args:
             api_key: DeepSeek API key
             dry_run: If True, only log the prompt without making API calls
+            prompt_generator: Optional prompt generator to use. Defaults to PromptFVG
         """
         self.api_key = api_key
         self.dry_run = dry_run
+        self.prompt_generator = prompt_generator or PromptFVG()
         self.logger = logging.getLogger(__name__)
 
     def _generate_prompt(self, hourly_df: pd.DataFrame, min15_df: pd.DataFrame, min5_df: pd.DataFrame, min1_df: pd.DataFrame, additional_context: dict = None) -> str:
@@ -67,19 +70,28 @@ class DeepSeekProvider(LLMProvider):
         return prompt
 
     async def get_trading_decision(self, hourly_df: pd.DataFrame, min15_df: pd.DataFrame, min5_df: pd.DataFrame, min1_df: pd.DataFrame, additional_context: Optional[Dict] = None) -> Dict:
-        """Get trading decision from DeepSeek."""
-        # Generate prompt
-        prompt = self._generate_prompt(hourly_df, min15_df, min5_df, min1_df, additional_context)
-        self.logger.info("\n=== Generated Prompt ===\n%s\n%s", prompt, "=" * 80)
-
+        """Get a trading decision from the model."""
+        # Generate prompt using the configured generator
+        prompt = self.prompt_generator.generate(
+            hourly_df=hourly_df,
+            min15_df=min15_df,
+            min5_df=min5_df,
+            min1_df=min1_df,
+            additional_context=additional_context
+        )
+        
+        self.logger.info("Generated prompt:")
+        self.logger.info(prompt)
+        
         if self.dry_run:
+            self.logger.info("Dry run mode - skipping API call")
             return {
                 "position": 0.0,
                 "confidence": 0.0,
                 "reasoning": "Dry run mode - no API call made"
             }
-
-        # Make API request
+        
+        # Prepare API request
         url = "https://api.deepseek.com/v1/chat/completions"
         headers = {
             "Content-Type": "application/json",
@@ -88,65 +100,73 @@ class DeepSeekProvider(LLMProvider):
         payload = {
             "model": "deepseek-reasoner",
             "messages": [
-                {"role": "system", "content": "You are a professional futures trader. Always respond with a valid JSON object containing position (-1.0 to 1.0), confidence (0.0 to 1.0), and reasoning."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "You are a professional futures trader. You will analyze market data and provide trading decisions in JSON format with position, confidence, and reasoning fields."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
             ]
         }
-
+        
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, headers=headers, json=payload) as response:
-                    response_text = await response.text()
-                    self.logger.info("\n=== Raw Response ===\n%s\n%s", response_text, "=" * 80)
-
+                    self.logger.info(f"API response status: {response.status}")
+                    
                     if response.status != 200:
-                        print(f"API request failed: {response_text}")
-                        return {
-                            "position": 0.0,
-                            "confidence": 0.0,
-                            "reasoning": f"API request failed: {response_text}"
-                        }
-
-                    # Try to parse response
+                        error_text = await response.text()
+                        self.logger.error(f"API error response: {error_text}")
+                        raise ValueError(f"API request failed with status {response.status}: {error_text}")
+                    
+                    raw_response = await response.text()
+                    self.logger.info(f"Raw API response: {raw_response}")
+                    
                     try:
-                        data = json.loads(response_text)
-                        content = data["choices"][0]["message"]["content"].strip()
-
-                        # Clean up content - remove markdown code blocks if present
+                        response_json = json.loads(raw_response)
+                        content = response_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        
+                        # Clean up content (remove markdown code blocks if present)
                         content = content.replace("```json", "").replace("```", "").strip()
-                        # Find the first { and last }
+                        
+                        # Find the JSON object in the content
                         start = content.find("{")
                         end = content.rfind("}") + 1
-                        if start >= 0 and end > start:
-                            content = content[start:end]
-
-                        # Try to parse content as JSON
-                        try:
-                            result = json.loads(content)
-                            print(f"Trading decision: {json.dumps(result, indent=2)}")
-                            return result
-                        except json.JSONDecodeError:
-                            print(f"Failed to parse model response as JSON: {content}")
-                            return {
-                                "position": 0.0,
-                                "confidence": 0.0,
-                                "reasoning": f"Failed to parse model response as JSON: {content}"
-                            }
-
-                    except (json.JSONDecodeError, KeyError, IndexError) as e:
-                        print(f"Failed to process API response: {e}")
-                        return {
-                            "position": 0.0,
-                            "confidence": 0.0,
-                            "reasoning": f"Failed to process API response: {str(e)}"
-                        }
-
+                        if start == -1 or end == 0:
+                            raise ValueError("No JSON object found in response")
+                        
+                        json_str = content[start:end]
+                        self.logger.info(f"Cleaned content for parsing: {json_str}")
+                        
+                        decision = json.loads(json_str)
+                        
+                        # Validate decision format
+                        required_keys = ["position", "confidence", "reasoning"]
+                        if not all(key in decision for key in required_keys):
+                            raise ValueError(f"Missing required keys in decision: {required_keys}")
+                        
+                        # Validate value ranges
+                        if not -1.0 <= float(decision["position"]) <= 1.0:
+                            raise ValueError(f"Position value out of range: {decision['position']}")
+                        if not 0.0 <= float(decision["confidence"]) <= 1.0:
+                            raise ValueError(f"Confidence value out of range: {decision['confidence']}")
+                        
+                        self.logger.info(f"Final decision: {decision}")
+                        return decision
+                        
+                    except json.JSONDecodeError as e:
+                        self.logger.error(f"Failed to parse JSON response: {e}")
+                        self.logger.error(f"Raw response that failed to parse: {raw_response}")
+                        raise
+                        
         except Exception as e:
-            print(f"Request failed: {e}")
+            self.logger.error(f"Error getting trading decision: {str(e)}")
             return {
                 "position": 0.0,
                 "confidence": 0.0,
-                "reasoning": f"Request failed: {str(e)}"
+                "reasoning": f"Error getting trading decision: {str(e)}"
             }
 
     async def test_api_connection(self):

@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import logging
 
 from src.llm.deepseek_provider import DeepSeekProvider
+from src.prompts.generators import PromptV0, PromptFVG
 from src.bot.trading_bot import TradingBot
 from src.backtest.engine import BacktestEngine
 from src.dashboard.app import Dashboard
@@ -38,6 +39,8 @@ def setup_logging():
     logging.getLogger('src.llm.deepseek_provider').setLevel(logging.DEBUG)
     logging.getLogger('urllib3').setLevel(logging.INFO)  # Reduce noise from HTTP client
     logging.getLogger('asyncio').setLevel(logging.INFO)  # Reduce noise from asyncio
+    logging.getLogger('yfinance').setLevel(logging.INFO)  # Reduce noise from yfinance
+    logging.getLogger('peewee').setLevel(logging.INFO)  # Reduce noise from peewee
 
 def parse_args():
     """Parse command line arguments."""
@@ -69,8 +72,17 @@ def parse_args():
         default=60,
         help="Update interval in seconds for live trading"
     )
-    parser.add_argument('--dry-run', action='store_true',
-                      help='Only log the prompt without making API calls')
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Only log the prompt without making API calls'
+    )
+    parser.add_argument(
+        '--prompt-type',
+        choices=['v0', 'fvg'],
+        default='fvg',
+        help='Type of prompt generator to use'
+    )
     return parser.parse_args()
 
 async def main():
@@ -85,13 +97,15 @@ async def main():
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         raise ValueError("DEEPSEEK_API_KEY environment variable not set")
-        
-    llm = DeepSeekProvider(api_key=api_key, dry_run=args.dry_run)
     
-    # Test API connection
-    if not await llm.test_api_connection():
-        print("\nError: Could not connect to DeepSeek API. Please check your API key and internet connection.")
-        return
+    # Select prompt generator based on argument
+    prompt_generator = PromptFVG() if args.prompt_type == 'fvg' else PromptV0()
+        
+    llm = DeepSeekProvider(
+        api_key=api_key,
+        dry_run=args.dry_run,
+        prompt_generator=prompt_generator
+    )
     
     # Initialize trading bot
     bot = TradingBot(

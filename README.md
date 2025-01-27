@@ -27,19 +27,44 @@ A trading bot that uses Large Language Models (LLM) to make trading decisions ba
 
 ## Usage
 
-### Running the Live Bot
+The bot can be run in several modes:
+
 ```bash
-python src/main.py --mode live --symbol MNQ
+# Live trading mode
+python -m src.main --mode live --symbol SPY
+
+# Backtest mode
+python -m src.main --mode backtest --symbol SPY --start-date 2024-01-01 --end-date 2024-01-31
+
+# Single analysis
+python -m src.main --mode oneshot --symbol SPY
+
+# Dashboard mode (default)
+python -m src.main --mode dashboard --symbol SPY
 ```
 
-### Running Backtests
+### Prompt Types
+
+The bot supports different types of market analysis prompts:
+
 ```bash
-python src/main.py --mode backtest --symbol MNQ --start-date 2024-01-01 --end-date 2024-02-01
+# Use Fair Value Gap (FVG) analysis (default)
+python -m src.main --mode oneshot --symbol SPY --prompt-type fvg
+
+# Use basic OHLCV analysis
+python -m src.main --mode oneshot --symbol SPY --prompt-type v0
 ```
 
-### Starting the Dashboard
+### Dry Run Mode
+
+You can test the prompt generation without making API calls using the `--dry-run` flag:
+
 ```bash
-python src/dashboard.py
+# Test FVG analysis prompt
+python -m src.main --mode oneshot --symbol SPY --prompt-type fvg --dry-run
+
+# Test basic OHLCV analysis prompt
+python -m src.main --mode oneshot --symbol SPY --prompt-type v0 --dry-run
 ```
 
 ## Project Structure
