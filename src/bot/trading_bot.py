@@ -5,6 +5,7 @@ import asyncio
 import logging
 from src.llm.base import LLMProvider
 from src.data.market_data import MarketDataFetcher, MarketDataProvider
+from src.analysis.market_regime import MarketRegimeDetector, MarketRegime
 
 class TradingBot:
     """Main trading bot class that coordinates LLM decisions with market data."""
@@ -29,7 +30,79 @@ class TradingBot:
         self.max_position_size = max_position_size
         self.min_confidence = min_confidence
         self.min_risk_reward = min_risk_reward
+        self.regime_detector = MarketRegimeDetector()
         self.logger = logging.getLogger(__name__)
+        
+    def _adjust_for_regime(self, decision: dict, regime_info: dict) -> dict:
+        """Adjust trading decision based on market regime.
+        
+        Args:
+            decision: Original trading decision
+            regime_info: Market regime information
+            
+        Returns:
+            dict: Adjusted trading decision
+        """
+        regime = regime_info['regime']
+        regime_conf = regime_info['confidence']
+        details = regime_info['details']
+        
+        # Adjust confidence based on regime alignment
+        position = decision.get('position', 0)
+        confidence = decision.get('confidence', 0)
+        
+        # In ranging markets, reduce position size and tighten stops
+        if regime in [MarketRegime.RANGING_LOW_VOL, MarketRegime.RANGING_HIGH_VOL]:
+            decision['position'] = position * 0.7  # Reduce position size
+            
+            # Tighten stops in high volatility
+            if regime == MarketRegime.RANGING_HIGH_VOL:
+                current_price = decision.get('current_price', 0)
+                if position > 0:  # Long
+                    new_sl = max(
+                        decision.get('stop_loss', 0),
+                        current_price - (current_price - decision.get('stop_loss', 0)) * 0.7
+                    )
+                else:  # Short
+                    new_sl = min(
+                        decision.get('stop_loss', 0),
+                        current_price + (decision.get('stop_loss', 0) - current_price) * 0.7
+                    )
+                decision['stop_loss'] = new_sl
+                
+        # In trending markets, align with trend and potentially increase position
+        elif regime in [MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN]:
+            trend_alignment = (
+                (regime == MarketRegime.TRENDING_UP and position > 0) or
+                (regime == MarketRegime.TRENDING_DOWN and position < 0)
+            )
+            if trend_alignment:
+                decision['confidence'] = min(1.0, confidence * (1 + regime_conf * 0.3))
+            else:
+                decision['confidence'] = confidence * 0.5
+                
+        # In breakout regimes, increase size if aligned with breakout
+        elif regime == MarketRegime.BREAKOUT:
+            breakout_alignment = (
+                (details['trend_direction'] > 0 and position > 0) or
+                (details['trend_direction'] < 0 and position < 0)
+            )
+            if breakout_alignment:
+                decision['confidence'] = min(1.0, confidence * (1 + regime_conf * 0.5))
+                
+        # In reversal regimes, increase confidence if trading against old trend
+        elif regime == MarketRegime.REVERSAL:
+            reversal_alignment = (
+                (details['trend_direction'] < 0 and position > 0) or
+                (details['trend_direction'] > 0 and position < 0)
+            )
+            if reversal_alignment:
+                decision['confidence'] = min(1.0, confidence * (1 + regime_conf * 0.4))
+                
+        # Add regime info to reasoning
+        decision['reasoning'] = f"Market Regime: {regime.value} (conf: {regime_conf:.2f})\n" + decision.get('reasoning', '')
+        
+        return decision
         
     def _calculate_position_size(self, decision: dict) -> float:
         """Calculate position size based on confidence and risk/reward.
@@ -97,16 +170,23 @@ class TradingBot:
                 
             current_price = min1_df.iloc[-1]['close']
             
+            # Detect market regime
+            regime_info = self.regime_detector.detect_regime(hourly_df, min15_df)
+            
             # Get trading decision from LLM
             decision = await self.llm.get_trading_decision(
                 hourly_df=hourly_df,
                 min15_df=min15_df,
                 min5_df=min5_df,
-                min1_df=min1_df
+                min1_df=min1_df,
+                additional_context={"market_regime": regime_info}
             )
             
             # Add current price for position sizing
             decision['current_price'] = current_price
+            
+            # Adjust decision based on market regime
+            decision = self._adjust_for_regime(decision, regime_info)
             
             # Calculate position size
             raw_position = decision.get('position', 0)
@@ -120,7 +200,8 @@ class TradingBot:
                 f"Decision: pos={decision['position']:.2f} (raw={raw_position:.2f}), "
                 f"conf={decision.get('confidence', 0):.2f}, "
                 f"tp={decision.get('take_profit', 0):.2f}, "
-                f"sl={decision.get('stop_loss', 0):.2f}"
+                f"sl={decision.get('stop_loss', 0):.2f}, "
+                f"regime={regime_info['regime'].value}"
             )
             
             return decision

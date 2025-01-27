@@ -324,6 +324,46 @@ class PromptFVG(BasePromptGenerator):
         prompt += f"Current Time: {current_time}\n"
         prompt += f"Current Price: {current_price:.2f}\n\n"
         
+        # Add market regime information if available
+        if additional_context and 'market_regime' in additional_context:
+            regime_info = additional_context['market_regime']
+            prompt += "Market Regime Analysis:\n"
+            prompt += f"Current Regime: {regime_info['regime'].value} (confidence: {regime_info['confidence']:.2f})\n"
+            details = regime_info['details']
+            prompt += f"- Trend Strength: {details['trend_strength']:.2f}\n"
+            prompt += f"- Trend Direction: {'Bullish' if details['trend_direction'] > 0 else 'Bearish' if details['trend_direction'] < 0 else 'Neutral'}\n"
+            prompt += f"- Volatility Percentile: {details['volatility_percentile']:.2f}\n"
+            prompt += f"- High Volatility: {'Yes' if details['is_high_volatility'] else 'No'}\n"
+            prompt += f"- Breakout Strength: {details['breakout_strength']:.2f}\n\n"
+            
+            # Add regime-specific trading guidance
+            prompt += "Regime-Specific Considerations:\n"
+            if regime_info['regime'].value == 'trending_up':
+                prompt += "- Market is in a strong uptrend - look for pullbacks to support for longs\n"
+                prompt += "- Use swing lows and bullish FVGs for stop placement\n"
+                prompt += "- Target next significant resistance levels\n"
+            elif regime_info['regime'].value == 'trending_down':
+                prompt += "- Market is in a strong downtrend - look for rallies to resistance for shorts\n"
+                prompt += "- Use swing highs and bearish FVGs for stop placement\n"
+                prompt += "- Target next significant support levels\n"
+            elif regime_info['regime'].value == 'ranging_low_vol':
+                prompt += "- Market is ranging with low volatility - trade range boundaries\n"
+                prompt += "- Use tighter stops and take-profits\n"
+                prompt += "- Look for breakout setups with volume confirmation\n"
+            elif regime_info['regime'].value == 'ranging_high_vol':
+                prompt += "- Market is ranging with high volatility - reduce position sizes\n"
+                prompt += "- Expect false breakouts and quick reversals\n"
+                prompt += "- Use wider stops but smaller positions\n"
+            elif regime_info['regime'].value == 'breakout':
+                prompt += "- Market is breaking out - look for continuation setups\n"
+                prompt += "- Use previous resistance/support as new support/resistance\n"
+                prompt += "- Trail stops aggressively\n"
+            elif regime_info['regime'].value == 'reversal':
+                prompt += "- Market is showing reversal potential - look for confirmation\n"
+                prompt += "- Use opposing swing levels for stop placement\n"
+                prompt += "- Scale into position as reversal confirms\n"
+            prompt += "\n"
+        
         # Add market structure analysis
         prompt += "Market Structure Analysis:\n"
         
