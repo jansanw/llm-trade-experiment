@@ -69,6 +69,8 @@ def parse_args():
         default=60,
         help="Update interval in seconds for live trading"
     )
+    parser.add_argument('--dry-run', action='store_true',
+                      help='Only log the prompt without making API calls')
     return parser.parse_args()
 
 async def main():
@@ -84,7 +86,7 @@ async def main():
     if not api_key:
         raise ValueError("DEEPSEEK_API_KEY environment variable not set")
         
-    llm = DeepSeekProvider(api_key=api_key)
+    llm = DeepSeekProvider(api_key=api_key, dry_run=args.dry_run)
     
     # Test API connection
     if not await llm.test_api_connection():

@@ -5,12 +5,22 @@ import pandas as pd
 from typing import Dict, Optional
 from .base import LLMProvider
 
+# Configure logging to ignore DEBUG from other libraries
+logging.getLogger('yfinance').setLevel(logging.WARNING)
+logging.getLogger('peewee').setLevel(logging.WARNING)
+
 class DeepSeekProvider(LLMProvider):
     """DeepSeek implementation of the LLM provider."""
     
-    def __init__(self, api_key: str):
-        """Initialize provider with API key."""
+    def __init__(self, api_key: str, dry_run: bool = False):
+        """Initialize provider with API key.
+        
+        Args:
+            api_key: DeepSeek API key
+            dry_run: If True, only log the prompt without making API calls
+        """
         self.api_key = api_key
+        self.dry_run = dry_run
         self.logger = logging.getLogger(__name__)
 
     def _generate_prompt(self, hourly_df: pd.DataFrame, min15_df: pd.DataFrame, min5_df: pd.DataFrame, min1_df: pd.DataFrame, additional_context: dict = None) -> str:
@@ -58,16 +68,16 @@ class DeepSeekProvider(LLMProvider):
 
     async def get_trading_decision(self, hourly_df: pd.DataFrame, min15_df: pd.DataFrame, min5_df: pd.DataFrame, min1_df: pd.DataFrame, additional_context: Optional[Dict] = None) -> Dict:
         """Get trading decision from DeepSeek."""
-        print("Starting trading decision request") # Debug print
-        self.logger.info("Starting trading decision request")
-
         # Generate prompt
-        print("Generating prompt...") # Debug print
         prompt = self._generate_prompt(hourly_df, min15_df, min5_df, min1_df, additional_context)
-        print("Prompt generated") # Debug print
-        self.logger.info("\n=== Generated Prompt ===")
-        self.logger.info(prompt)
-        self.logger.info("=" * 80)
+        self.logger.info("\n=== Generated Prompt ===\n%s\n%s", prompt, "=" * 80)
+
+        if self.dry_run:
+            return {
+                "position": 0.0,
+                "confidence": 0.0,
+                "reasoning": "Dry run mode - no API call made"
+            }
 
         # Make API request
         url = "https://api.deepseek.com/v1/chat/completions"
@@ -83,20 +93,14 @@ class DeepSeekProvider(LLMProvider):
             ]
         }
 
-        print(f"Making API request to {url}") # Debug print
         try:
             async with aiohttp.ClientSession() as session:
-                print("Session created") # Debug print
                 async with session.post(url, headers=headers, json=payload) as response:
-                    print(f"Got response with status {response.status}") # Debug print
                     response_text = await response.text()
-                    print(f"Response text: {response_text[:200]}...") # Debug print first 200 chars
-                    self.logger.info("\n=== Raw Response ===")
-                    self.logger.info(response_text)
-                    self.logger.info("=" * 80)
+                    self.logger.info("\n=== Raw Response ===\n%s\n%s", response_text, "=" * 80)
 
                     if response.status != 200:
-                        print(f"Request failed with status {response.status}") # Debug print
+                        print(f"API request failed: {response_text}")
                         return {
                             "position": 0.0,
                             "confidence": 0.0,
@@ -105,13 +109,8 @@ class DeepSeekProvider(LLMProvider):
 
                     # Try to parse response
                     try:
-                        print("Parsing response as JSON") # Debug print
                         data = json.loads(response_text)
                         content = data["choices"][0]["message"]["content"].strip()
-                        print(f"Got content: {content[:200]}...") # Debug print first 200 chars
-                        self.logger.info("\n=== Model Response ===")
-                        self.logger.info(content)
-                        self.logger.info("=" * 80)
 
                         # Clean up content - remove markdown code blocks if present
                         content = content.replace("```json", "").replace("```", "").strip()
@@ -120,17 +119,14 @@ class DeepSeekProvider(LLMProvider):
                         end = content.rfind("}") + 1
                         if start >= 0 and end > start:
                             content = content[start:end]
-                        
-                        print(f"Cleaned content: {content}") # Debug print
 
                         # Try to parse content as JSON
                         try:
-                            print("Parsing content as JSON") # Debug print
                             result = json.loads(content)
-                            print(f"Final result: {result}") # Debug print
+                            print(f"Trading decision: {json.dumps(result, indent=2)}")
                             return result
                         except json.JSONDecodeError:
-                            print("Failed to parse content as JSON") # Debug print
+                            print(f"Failed to parse model response as JSON: {content}")
                             return {
                                 "position": 0.0,
                                 "confidence": 0.0,
@@ -138,7 +134,7 @@ class DeepSeekProvider(LLMProvider):
                             }
 
                     except (json.JSONDecodeError, KeyError, IndexError) as e:
-                        print(f"Failed to process API response: {e}") # Debug print
+                        print(f"Failed to process API response: {e}")
                         return {
                             "position": 0.0,
                             "confidence": 0.0,
@@ -146,7 +142,7 @@ class DeepSeekProvider(LLMProvider):
                         }
 
         except Exception as e:
-            print(f"Request failed with error: {e}") # Debug print
+            print(f"Request failed: {e}")
             return {
                 "position": 0.0,
                 "confidence": 0.0,
