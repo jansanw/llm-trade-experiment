@@ -9,92 +9,39 @@ from src.data.market_data import MarketDataFetcher, MarketDataProvider
 class TradingBot:
     """Main trading bot class that coordinates LLM decisions with market data."""
     
-    def __init__(
-        self,
-        llm_provider: LLMProvider,
-        symbol: str,
-        update_interval: int = 60,  # seconds
-        min_confidence: float = 0.7,
-        position_threshold: float = 0.3
-    ):
-        """
-        Initialize the trading bot.
+    def __init__(self, symbol: str, data_fetcher, llm):
+        """Initialize the trading bot.
         
         Args:
-            llm_provider: LLM provider instance
-            symbol: Trading symbol
-            update_interval: How often to check for new signals (seconds)
-            min_confidence: Minimum confidence required to take a position
-            position_threshold: Minimum absolute position value to consider taking action
+            symbol: Trading symbol (e.g. SPY, BTC-USD)
+            data_fetcher: Market data fetcher instance
+            llm: LLM provider instance
         """
-        self.llm = llm_provider
         self.symbol = symbol
-        self.update_interval = update_interval
-        self.min_confidence = min_confidence
-        self.position_threshold = position_threshold
-        
-        self.market_data = MarketDataFetcher()
-        self.provider = self.market_data.get_provider(
-            MarketDataFetcher.detect_asset_type(symbol)
-        )
-        
-        self.current_position = 0.0
-        self.last_decision_time = None
-        self.last_decision = None
-        
+        self.data_fetcher = data_fetcher
+        self.llm = llm
         self.logger = logging.getLogger(__name__)
-        self._setup_logging()
         
-    def _setup_logging(self):
-        """Setup logging configuration."""
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
-        self.logger.setLevel(logging.INFO)
-        
-    async def get_trading_decision(
-        self,
-        end_time: Optional[datetime] = None
-    ) -> Dict:
-        """
-        Get trading decision from LLM based on current market data.
+    async def get_trading_decision(self, timestamp=None):
+        """Get trading decision for the current market state.
         
         Args:
-            end_time: Optional end time for historical data
+            timestamp: Optional timestamp to get decision for (used in backtesting)
             
         Returns:
-            Dictionary containing position, confidence, and reasoning
+            dict: Trading decision with position, confidence, take-profit, stop-loss and reasoning
         """
         try:
-            # Fetch market data
-            hourly_df, min15_df, min5_df, min1_df = (
-                await self.provider.fetch_multi_timeframe_data(
-                    self.symbol,
-                    end_time
-                )
-            )
+            # Fetch multi-timeframe data
+            hourly_df, min15_df, min5_df, min1_df = await self.data_fetcher.fetch_multi_timeframe_data(end_time=timestamp)
             
-            # Get additional context about current position
-            context = {
-                "current_position": self.current_position,
-                "last_decision_time": self.last_decision_time,
-                "last_decision": self.last_decision
-            }
-            
-            # Get LLM decision
+            # Get trading decision from LLM
             decision = await self.llm.get_trading_decision(
-                hourly_df,
-                min15_df,
-                min5_df,
-                min1_df,
-                context
+                hourly_df=hourly_df,
+                min15_df=min15_df,
+                min5_df=min5_df,
+                min1_df=min1_df
             )
-            
-            self.last_decision = decision
-            self.last_decision_time = datetime.now()
             
             return decision
             
@@ -105,6 +52,27 @@ class TradingBot:
                 "confidence": 0.0,
                 "reasoning": f"Error: {str(e)}"
             }
+            
+    async def get_minute_data(self, start_time, end_time):
+        """Get 1-minute candle data between specified timestamps.
+        
+        Args:
+            start_time: Start timestamp
+            end_time: End timestamp
+            
+        Returns:
+            pandas.DataFrame: 1-minute OHLCV data
+        """
+        try:
+            return await self.data_fetcher.get_candles(
+                symbol=self.symbol,
+                interval="1m",
+                start_time=start_time,
+                end_time=end_time
+            )
+        except Exception as e:
+            self.logger.error(f"Error fetching minute data: {str(e)}")
+            return pd.DataFrame()
             
     async def run_live(self):
         """Run the bot in live trading mode."""

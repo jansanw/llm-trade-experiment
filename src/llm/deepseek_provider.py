@@ -2,9 +2,15 @@ import json
 import logging
 import aiohttp
 import pandas as pd
+import platform
+import asyncio
 from typing import Dict, Optional
 from .base import LLMProvider
 from src.prompts.generators import BasePromptGenerator, PromptV0, PromptFVG
+
+# Configure Windows-specific event loop policy
+if platform.system() == 'Windows':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # Configure logging to ignore DEBUG from other libraries
 logging.getLogger('yfinance').setLevel(logging.WARNING)
