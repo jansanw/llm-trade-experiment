@@ -147,6 +147,9 @@ class YFinanceProvider(MarketDataProvider):
                 )
                 
                 if not chunk.empty:
+                    # Ensure index is timezone-aware
+                    if chunk.index.tz is None:
+                        chunk.index = chunk.index.tz_localize('US/Eastern')
                     chunks.append(chunk)
                     
                 current_end = current_start
@@ -154,11 +157,11 @@ class YFinanceProvider(MarketDataProvider):
             if not chunks:
                 raise ValueError(f"No data available for {symbol}")
                 
-            # Combine chunks
+            # Combine chunks and sort by time
             df_1m = pd.concat(chunks).sort_index()
             
             # Resample to other timeframes
-            df_5m = df_1m.resample('5T', closed='left', label='left').agg({
+            df_5m = df_1m.resample('5min', closed='left', label='left').agg({
                 'Open': 'first',
                 'High': 'max',
                 'Low': 'min',
@@ -166,7 +169,7 @@ class YFinanceProvider(MarketDataProvider):
                 'Volume': 'sum'
             }).dropna()
             
-            df_15m = df_1m.resample('15T', closed='left', label='left').agg({
+            df_15m = df_1m.resample('15min', closed='left', label='left').agg({
                 'Open': 'first',
                 'High': 'max',
                 'Low': 'min',
@@ -174,7 +177,7 @@ class YFinanceProvider(MarketDataProvider):
                 'Volume': 'sum'
             }).dropna()
             
-            df_1h = df_1m.resample('1H', closed='left', label='left').agg({
+            df_1h = df_1m.resample('1h', closed='left', label='left').agg({
                 'Open': 'first',
                 'High': 'max',
                 'Low': 'min',
@@ -188,14 +191,16 @@ class YFinanceProvider(MarketDataProvider):
             df_15m = df_15m.tail(100)
             df_1h = df_1h.tail(100)
             
-            # Standardize column names
+            # Standardize column names and ensure timezone-aware timestamps
             for df in [df_1h, df_15m, df_5m, df_1m]:
-                df.reset_index(inplace=True)
+                # Save the index before resetting
+                df['timestamp'] = df.index
+                df.reset_index(drop=True, inplace=True)
                 df.columns = [c.lower() for c in df.columns]
-                df.rename(columns={"datetime": "timestamp"}, inplace=True)
+                # Convert timestamps to timezone-aware datetime if needed
                 if df["timestamp"].dt.tz is None:
                     df["timestamp"] = df["timestamp"].dt.tz_localize('US/Eastern')
-            
+                
             return df_1h, df_15m, df_5m, df_1m
             
         except Exception as e:
@@ -266,103 +271,6 @@ class MarketDataFetcher:
         self.et_tz = pytz.timezone('US/Eastern')
         self.provider = YFinanceProvider()
         
-    def _generate_synthetic_data(
-        self, 
-        start_time: datetime,
-        end_time: datetime,
-        interval: str,
-        base_price: float = 600.0,
-        volatility: float = 0.002
-    ) -> pd.DataFrame:
-        """Generate synthetic price data.
-        
-        Args:
-            start_time: Start time for data generation
-            end_time: End time for data generation
-            interval: Time interval (e.g. "1h", "15m", "5m", "1m")
-            base_price: Starting price level
-            volatility: Daily volatility for random walk
-        
-        Returns:
-            DataFrame with OHLCV data
-        """
-        # Convert interval to minutes
-        interval_mins = {
-            "1h": 60,
-            "15m": 15,
-            "5m": 5,
-            "1m": 1
-        }[interval]
-        
-        # Generate timestamps
-        timestamps = []
-        current = start_time
-        while current <= end_time:
-            timestamps.append(current)
-            current += timedelta(minutes=interval_mins)
-            
-        # Generate random walk
-        returns = np.random.normal(0, volatility, len(timestamps))
-        prices = base_price * np.exp(np.cumsum(returns))
-        
-        # Generate OHLCV data
-        data = []
-        for i, ts in enumerate(timestamps):
-            price = prices[i]
-            high = price * (1 + abs(np.random.normal(0, volatility/2)))
-            low = price * (1 - abs(np.random.normal(0, volatility/2)))
-            volume = np.random.randint(1000, 10000)
-            
-            data.append({
-                "timestamp": ts,
-                "open": price,
-                "high": high,
-                "low": low,
-                "close": price,
-                "volume": volume,
-                "vwap": price,
-                "trades": np.random.randint(10, 100)
-            })
-            
-        df = pd.DataFrame(data)
-        df.set_index("timestamp", inplace=True)
-        return df
-        
-    async def get_candles(
-        self,
-        symbol: str,
-        interval: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None
-    ) -> pd.DataFrame:
-        """Get OHLCV candles for symbol."""
-        try:
-            # Get current time in UTC
-            now = datetime.now(pytz.UTC)
-            
-            # If requesting future data, use most recent available data
-            if start_time and start_time.replace(tzinfo=pytz.UTC) > now:
-                self.logger.info(f"Adjusting future dates to use most recent data")
-                # Calculate the time difference
-                time_diff = start_time.replace(tzinfo=pytz.UTC) - now
-                # Shift the request window back by that difference
-                adjusted_start = start_time - time_diff
-                adjusted_end = end_time - time_diff if end_time else now
-                
-                provider = self.get_provider(self.detect_asset_type(symbol))
-                df = await provider.get_candles(symbol, interval, adjusted_start, adjusted_end)
-                
-                # Shift the timestamps forward to match requested time window
-                df['timestamp'] = df['timestamp'] + time_diff
-                return df
-            
-            provider = self.get_provider(self.detect_asset_type(symbol))
-            return await provider.get_candles(symbol, interval, start_time, end_time)
-            
-        except Exception as e:
-            self.logger.error(f"Error fetching data for {symbol}: {str(e)}")
-            raise ValueError(f"Failed to fetch data for {symbol}: {str(e)}")
-            
     async def fetch_multi_timeframe_data(
         self,
         end_time: Optional[datetime] = None
@@ -378,8 +286,7 @@ class MarketDataFetcher:
         self.logger.info(f"Fetching multi-timeframe data for {self.symbol} up to {end_time}")
         
         try:
-            provider = self.get_provider(self.detect_asset_type(self.symbol))
-            return await provider.fetch_multi_timeframe_data(self.symbol, end_time)
+            return await self.provider.fetch_multi_timeframe_data(self.symbol, end_time)
             
         except Exception as e:
             self.logger.error(f"Error fetching multi-timeframe data: {str(e)}")
