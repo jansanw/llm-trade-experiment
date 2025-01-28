@@ -75,6 +75,19 @@ class DeepSeekProvider(LLMProvider):
         
         return prompt
 
+    def _format_reasoning(self, reasoning_dict: dict) -> str:
+        """Format the reasoning dictionary into a readable string."""
+        if not isinstance(reasoning_dict, dict):
+            return str(reasoning_dict)
+            
+        sections = []
+        for key, value in reasoning_dict.items():
+            # Convert key from snake_case to Title Case
+            title = key.replace('_', ' ').title()
+            sections.append(f"{title}: {value}")
+            
+        return "\n".join(sections)
+
     async def get_trading_decision(self, hourly_df: pd.DataFrame, min15_df: pd.DataFrame, min5_df: pd.DataFrame, min1_df: pd.DataFrame, additional_context: Optional[Dict] = None) -> Dict:
         """Get a trading decision from the model."""
         # Generate prompt using the configured generator
@@ -94,6 +107,8 @@ class DeepSeekProvider(LLMProvider):
             return {
                 "position": 0.0,
                 "confidence": 0.0,
+                "take_profit": None,
+                "stop_loss": None,
                 "reasoning": "Dry run mode - no API call made"
             }
         
@@ -146,7 +161,12 @@ class DeepSeekProvider(LLMProvider):
                         json_str = content[start:end]
                         self.logger.info(f"Cleaned content for parsing: {json_str}")
                         
+                        # Parse the response
                         decision = json.loads(json_str)
+                        
+                        # Format the reasoning if it's a dictionary
+                        if isinstance(decision.get('reasoning'), dict):
+                            decision['reasoning'] = self._format_reasoning(decision['reasoning'])
                         
                         # Validate decision format
                         required_keys = ["position", "confidence", "take_profit", "stop_loss", "reasoning"]
@@ -192,6 +212,8 @@ class DeepSeekProvider(LLMProvider):
             return {
                 "position": 0.0,
                 "confidence": 0.0,
+                "take_profit": None,
+                "stop_loss": None,
                 "reasoning": f"Error getting trading decision: {str(e)}"
             }
 

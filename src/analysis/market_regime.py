@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
 from enum import Enum
-from typing import Tuple, Dict
+from typing import Tuple, Dict, List
+from dataclasses import dataclass
 
 class MarketRegime(Enum):
     """Market regime classification."""
@@ -11,7 +12,20 @@ class MarketRegime(Enum):
     RANGING_HIGH_VOL = "ranging_high_vol"
     BREAKOUT = "breakout"
     REVERSAL = "reversal"
+    ACCUMULATION = "accumulation"  # New: Sideways with increasing volume
+    DISTRIBUTION = "distribution"  # New: Sideways with decreasing volume
+    MOMENTUM = "momentum"  # New: Strong trend with increasing momentum
+    EXHAUSTION = "exhaustion"  # New: Strong trend with decreasing momentum
     UNKNOWN = "unknown"
+
+@dataclass
+class RegimeTransition:
+    """Represents a transition between market regimes."""
+    from_regime: MarketRegime
+    to_regime: MarketRegime
+    confidence: float
+    timestamp: pd.Timestamp
+    metrics: Dict
 
 class MarketRegimeDetector:
     """Detects market regime using multiple indicators and timeframes."""
@@ -20,7 +34,9 @@ class MarketRegimeDetector:
                  trend_window: int = 20,
                  vol_window: int = 20,
                  breakout_std: float = 2.0,
-                 trend_threshold: float = 0.6):
+                 trend_threshold: float = 0.6,
+                 momentum_lookback: int = 10,
+                 transition_memory: int = 5):
         """Initialize detector with parameters.
         
         Args:
@@ -28,11 +44,16 @@ class MarketRegimeDetector:
             vol_window: Window for volatility calculations
             breakout_std: Standard deviations for breakout detection
             trend_threshold: Threshold for trend strength (0.0 to 1.0)
+            momentum_lookback: Periods to look back for momentum calculation
+            transition_memory: Number of regime transitions to remember
         """
         self.trend_window = trend_window
         self.vol_window = vol_window
         self.breakout_std = breakout_std
         self.trend_threshold = trend_threshold
+        self.momentum_lookback = momentum_lookback
+        self.transition_memory = transition_memory
+        self.regime_history: List[RegimeTransition] = []
         
     def _calculate_trend_strength(self, df: pd.DataFrame) -> Tuple[float, float]:
         """Calculate trend strength using multiple indicators.
@@ -119,6 +140,137 @@ class MarketRegimeDetector:
             
         return is_breakout, min(1.0, strength / 2)
         
+    def _calculate_momentum(self, df: pd.DataFrame) -> Tuple[float, float]:
+        """Calculate momentum using rate of change and volume.
+        
+        Returns:
+            Tuple[float, float]: (momentum_strength, momentum_direction)
+            momentum_strength: 0.0 to 1.0 (stronger momentum)
+            momentum_direction: -1.0 to 1.0 (down to up)
+        """
+        # Rate of change momentum
+        roc = df['close'].pct_change(self.momentum_lookback)
+        
+        # Volume-weighted momentum
+        vol_roc = df['volume'].pct_change(self.momentum_lookback)
+        rel_vol = df['volume'] / df['volume'].rolling(50).mean()
+        
+        # RSI for overbought/oversold
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        
+        # Combine indicators
+        mom_direction = np.sign(roc.iloc[-1])
+        mom_strength = min(1.0, abs(roc.iloc[-1]) * (1 + rel_vol.iloc[-1]) / 2)
+        
+        # Adjust for overbought/oversold
+        if rsi.iloc[-1] > 70:
+            mom_strength *= 0.7  # Reduce momentum in overbought
+        elif rsi.iloc[-1] < 30:
+            mom_strength *= 0.7  # Reduce momentum in oversold
+            
+        return mom_strength, mom_direction
+        
+    def _analyze_volume_profile(self, df: pd.DataFrame) -> Dict:
+        """Analyze volume profile for accumulation/distribution patterns.
+        
+        Returns:
+            Dict with volume analysis metrics
+        """
+        # Calculate volume metrics
+        vol_sma = df['volume'].rolling(20).mean()
+        vol_std = df['volume'].rolling(20).std()
+        rel_vol = df['volume'] / vol_sma
+        
+        # Detect volume trends
+        vol_trend = df['volume'].rolling(10).mean().diff()
+        vol_trend_strength = abs(vol_trend.mean() / vol_std.mean())
+        
+        # Price spread analysis
+        spreads = df['high'] - df['low']
+        spread_ma = spreads.rolling(20).mean()
+        
+        # Volume by price analysis (simple version)
+        price_bins = pd.qcut(df['close'], q=5, labels=['bottom', 'low', 'mid', 'high', 'top'])
+        vol_by_price = df.groupby(price_bins)['volume'].mean()
+        
+        # Detect accumulation/distribution
+        high_vol_at_lows = (vol_by_price['bottom'] + vol_by_price['low']) / vol_by_price.mean()
+        high_vol_at_highs = (vol_by_price['top'] + vol_by_price['high']) / vol_by_price.mean()
+        
+        return {
+            "vol_trend_strength": vol_trend_strength,
+            "vol_trend_direction": np.sign(vol_trend.iloc[-1]),
+            "relative_volume": rel_vol.iloc[-1],
+            "spread_ratio": spreads.iloc[-1] / spread_ma.iloc[-1],
+            "high_vol_at_lows": high_vol_at_lows,
+            "high_vol_at_highs": high_vol_at_highs
+        }
+        
+    def _detect_liquidity_levels(self, df: pd.DataFrame) -> Dict:
+        """Detect potential liquidity levels using volume and price action.
+        
+        Returns:
+            Dict with liquidity analysis
+        """
+        # Find high volume nodes
+        vol_profile = pd.DataFrame({
+            'price': df['close'],
+            'volume': df['volume']
+        })
+        
+        # Create price bins
+        bins = pd.qcut(vol_profile['price'], q=20)
+        vol_by_price = vol_profile.groupby(bins)['volume'].sum()
+        
+        # Find high volume nodes
+        high_vol_threshold = vol_by_price.mean() + vol_by_price.std()
+        liquidity_levels = vol_by_price[vol_by_price > high_vol_threshold]
+        
+        # Calculate distance to nearest liquidity level
+        current_price = df['close'].iloc[-1]
+        
+        # Get bin intervals for liquidity levels
+        distances = []
+        for bin_interval, level in liquidity_levels.items():
+            mid_price = (bin_interval.left + bin_interval.right) / 2
+            distances.append((level, abs(current_price - mid_price)))
+        
+        distances.sort(key=lambda x: x[1])
+        
+        return {
+            "nearest_liquidity": distances[0][0] if distances else 0,
+            "distance_to_liquidity": distances[0][1] if distances else float('inf'),
+            "liquidity_above": any((bin_interval.left + bin_interval.right) / 2 > current_price 
+                                 for bin_interval, _ in liquidity_levels.items()),
+            "liquidity_below": any((bin_interval.left + bin_interval.right) / 2 < current_price 
+                                 for bin_interval, _ in liquidity_levels.items())
+        }
+        
+    def _detect_regime_transition(self, current_regime: MarketRegime, 
+                                confidence: float, metrics: Dict,
+                                timestamp: pd.Timestamp) -> None:
+        """Detect and record regime transitions."""
+        if not self.regime_history:
+            self.regime_history.append(RegimeTransition(
+                MarketRegime.UNKNOWN, current_regime, confidence, timestamp, metrics
+            ))
+            return
+            
+        last_regime = self.regime_history[-1].to_regime
+        if last_regime != current_regime:
+            transition = RegimeTransition(
+                last_regime, current_regime, confidence, timestamp, metrics
+            )
+            self.regime_history.append(transition)
+            
+            # Keep only recent transitions
+            if len(self.regime_history) > self.transition_memory:
+                self.regime_history.pop(0)
+                
     def detect_regime(self, hourly_df: pd.DataFrame, min15_df: pd.DataFrame) -> Dict:
         """Detect current market regime using multiple timeframes.
         
@@ -127,10 +279,15 @@ class MarketRegimeDetector:
             - regime: MarketRegime enum
             - confidence: 0.0 to 1.0
             - details: Dict with supporting metrics
+            - transitions: List of recent regime transitions
         """
         # Get trend info from both timeframes
         h_trend_str, h_trend_dir = self._calculate_trend_strength(hourly_df)
         m15_trend_str, m15_trend_dir = self._calculate_trend_strength(min15_df)
+        
+        # Get momentum info
+        h_mom_str, h_mom_dir = self._calculate_momentum(hourly_df)
+        m15_mom_str, m15_mom_dir = self._calculate_momentum(min15_df)
         
         # Get volatility info
         h_high_vol, h_vol_pct = self._detect_volatility_regime(hourly_df)
@@ -140,16 +297,50 @@ class MarketRegimeDetector:
         h_breakout, h_break_str = self._detect_breakout(hourly_df)
         m15_breakout, m15_break_str = self._detect_breakout(min15_df)
         
+        # Get volume profile analysis
+        h_vol_profile = self._analyze_volume_profile(hourly_df)
+        m15_vol_profile = self._analyze_volume_profile(min15_df)
+        
+        # Get liquidity analysis
+        h_liquidity = self._detect_liquidity_levels(hourly_df)
+        m15_liquidity = self._detect_liquidity_levels(min15_df)
+        
         # Combine metrics
         trend_strength = (h_trend_str * 0.7 + m15_trend_str * 0.3)
         trend_direction = h_trend_dir if abs(h_trend_dir) > 0 else m15_trend_dir
+        mom_strength = (h_mom_str * 0.7 + m15_mom_str * 0.3)
+        mom_direction = h_mom_dir if abs(h_mom_dir) > 0 else m15_mom_dir
         is_high_vol = h_high_vol or m15_high_vol
         vol_percentile = max(h_vol_pct, m15_vol_pct)
         is_breakout = h_breakout or m15_breakout
         breakout_strength = max(h_break_str, m15_break_str)
         
-        # Determine regime
-        if is_breakout and breakout_strength > 0.5:
+        # Enhanced regime detection
+        regime = MarketRegime.UNKNOWN
+        confidence = 0.0
+        
+        # Check for momentum regime
+        if trend_strength > 0.6 and mom_strength > 0.7 and trend_direction == mom_direction:
+            regime = MarketRegime.MOMENTUM
+            confidence = min(trend_strength, mom_strength)
+            
+        # Check for exhaustion
+        elif trend_strength > 0.6 and mom_strength < 0.3:
+            regime = MarketRegime.EXHAUSTION
+            confidence = trend_strength * (1 - mom_strength)
+            
+        # Check for accumulation/distribution
+        elif trend_strength < 0.4 and not is_high_vol:
+            vol_trend = h_vol_profile['vol_trend_direction']
+            if vol_trend > 0 and h_vol_profile['high_vol_at_lows'] > 1.2:
+                regime = MarketRegime.ACCUMULATION
+                confidence = h_vol_profile['high_vol_at_lows'] / 2
+            elif vol_trend < 0 and h_vol_profile['high_vol_at_highs'] > 1.2:
+                regime = MarketRegime.DISTRIBUTION
+                confidence = h_vol_profile['high_vol_at_highs'] / 2
+                
+        # Check other regimes
+        elif is_breakout and breakout_strength > 0.5:
             regime = MarketRegime.BREAKOUT
             confidence = breakout_strength
         elif trend_strength > self.trend_threshold:
@@ -165,10 +356,24 @@ class MarketRegimeDetector:
                 regime = MarketRegime.RANGING_LOW_VOL
             confidence = 1 - trend_strength
             
-        # Check for potential reversal
+        # Check for reversal
         if trend_strength > 0.4 and breakout_strength > 0.3 and trend_direction * h_trend_dir < 0:
             regime = MarketRegime.REVERSAL
             confidence = min(trend_strength, breakout_strength)
+            
+        # Record regime transition
+        self._detect_regime_transition(
+            regime, confidence,
+            {
+                "trend_strength": trend_strength,
+                "trend_direction": trend_direction,
+                "momentum_strength": mom_strength,
+                "momentum_direction": mom_direction,
+                "volatility_percentile": vol_percentile,
+                "breakout_strength": breakout_strength
+            },
+            hourly_df.index[-1]
+        )
             
         return {
             "regime": regime,
@@ -176,8 +381,22 @@ class MarketRegimeDetector:
             "details": {
                 "trend_strength": trend_strength,
                 "trend_direction": trend_direction,
+                "momentum_strength": mom_strength,
+                "momentum_direction": mom_direction,
                 "volatility_percentile": vol_percentile,
                 "is_high_volatility": is_high_vol,
-                "breakout_strength": breakout_strength
-            }
+                "breakout_strength": breakout_strength,
+                "volume_profile": h_vol_profile,
+                "liquidity_levels": h_liquidity
+            },
+            "transitions": [
+                {
+                    "from": t.from_regime.value,
+                    "to": t.to_regime.value,
+                    "confidence": t.confidence,
+                    "timestamp": t.timestamp,
+                    "metrics": t.metrics
+                }
+                for t in self.regime_history
+            ]
         } 
