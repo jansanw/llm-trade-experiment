@@ -317,13 +317,48 @@ class PromptFVG(BasePromptGenerator):
     def generate(self, hourly_df: pd.DataFrame, min15_df: pd.DataFrame, 
                 min5_df: pd.DataFrame, min1_df: pd.DataFrame, 
                 additional_context: Optional[Dict] = None) -> str:
+        # Ensure all dataframes have proper datetime index
+        def ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
+            df = df.copy()
+            if not isinstance(df.index, pd.DatetimeIndex):
+                df.index = pd.to_datetime(df['timestamp'])
+            return df
+            
+        hourly_df = ensure_datetime_index(hourly_df)
+        min15_df = ensure_datetime_index(min15_df)
+        min5_df = ensure_datetime_index(min5_df)
+        min1_df = ensure_datetime_index(min1_df)
+        
         current_price = min1_df.iloc[-1]['close']
-        current_time = min1_df.iloc[-1]['timestamp'].strftime('%Y-%m-%d %H:%M')
-        # test
+        current_time = min1_df.index[-1].strftime('%Y-%m-%d %H:%M')
         
         prompt = "You are a professional futures trader specializing in ICT concepts and market structure analysis.\n\n"
         prompt += f"Current Time: {current_time}\n"
         prompt += f"Current Price: {current_price:.2f}\n\n"
+        
+        # Add daily bias analysis
+        prompt += "Daily Market Analysis:\n"
+        current_date = min1_df.index[-1].date()
+        daily_data = hourly_df[hourly_df.index.date == current_date]
+        
+        if not daily_data.empty:
+            day_open = daily_data.iloc[0]['open']
+            day_high = daily_data['high'].max()
+            day_low = daily_data['low'].min()
+            day_change = ((current_price - day_open) / day_open) * 100
+            
+            # Calculate volume stats using timestamp-based grouping
+            day_vol = daily_data['volume'].sum()
+            daily_volumes = hourly_df.groupby(hourly_df.index.date)['volume'].sum()
+            avg_daily_vol = daily_volumes.mean() if not daily_volumes.empty else 0
+            
+            prompt += f"- Day Open: {day_open:.2f}\n"
+            prompt += f"- Day High: {day_high:.2f}\n"
+            prompt += f"- Day Low: {day_low:.2f}\n"
+            prompt += f"- Day Change: {day_change:+.2f}%\n"
+            if avg_daily_vol > 0:
+                prompt += f"- Volume vs Average: {(day_vol/avg_daily_vol - 1)*100:+.1f}%\n"
+            prompt += "\n"
         
         # Add market regime information if available
         if additional_context and 'market_regime' in additional_context:
@@ -438,17 +473,26 @@ class PromptFVG(BasePromptGenerator):
         if additional_context:
             prompt += f"\nAdditional Context:\n{additional_context}\n"
         
-        prompt += "\nBased on the above market structure analysis, provide a detailed trading plan:\n"
-        prompt += "1. Position (-1.0 for full short to 1.0 for full long)\n"
-        prompt += "2. Confidence level (0.0 to 1.0)\n"
-        prompt += "3. Take-profit price - use nearest significant resistance for longs or support for shorts\n"
-        prompt += "4. Stop-loss price - use market structure (swings/FVGs) to define invalidation level\n"
-        prompt += "5. Detailed reasoning including:\n"
+        prompt += "\nBased on the above market structure analysis, provide a detailed trading plan with both daily and current bias:\n"
+        prompt += "1. Daily Bias:\n"
+        prompt += "   - Direction (-1.0 for bearish to 1.0 for bullish)\n"
+        prompt += "   - Confidence (0.0 to 1.0)\n"
+        prompt += "   - Key levels to watch for the day\n"
+        prompt += "2. Current Position:\n"
+        prompt += "   - Position (-1.0 for full short to 1.0 for full long)\n"
+        prompt += "   - Confidence (0.0 to 1.0)\n"
+        prompt += "   - Take-profit price - use nearest significant resistance for longs or support for shorts\n"
+        prompt += "   - Stop-loss price - use market structure (swings/FVGs) to define invalidation level\n"
+        prompt += "3. Detailed reasoning including:\n"
+        prompt += "   - How daily bias influences current position\n"
         prompt += "   - Primary market structure levels being used\n"
         prompt += "   - How the multi-timeframe trend aligns with the trade\n"
         prompt += "   - Volume confirmation/concerns\n"
         prompt += "   - Risk:reward ratio justification\n\n"
-        prompt += "Format your response as a JSON object with keys: position, confidence, take_profit, stop_loss, reasoning\n"
-        prompt += "Note: take_profit and stop_loss should be absolute price levels based on the current price of " + f"{current_price:.2f}"
+        prompt += "Format your response as a JSON object with keys:\n"
+        prompt += "- daily_bias: {direction, confidence, key_levels: []}\n"
+        prompt += "- current_position: {position, confidence, take_profit, stop_loss}\n"
+        prompt += "- reasoning: {daily_context, levels_analysis, trend_alignment, volume_analysis, risk_reward}\n"
+        prompt += f"Note: take_profit and stop_loss should be absolute price levels based on the current price of {current_price:.2f}"
         
         return prompt 

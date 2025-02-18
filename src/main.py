@@ -95,13 +95,30 @@ async def main():
         try:
             decision = await bot.get_trading_decision()
             print(f"\nTrading Decision:")
-            print(f"Position: {'LONG' if decision['position'] > 0 else 'SHORT' if decision['position'] < 0 else 'NEUTRAL'}")
-            print(f"Size: {abs(decision['position']):.2f}")
-            print(f"Confidence: {decision['confidence']*100:.1f}%")
-            if decision.get('take_profit'):
-                print(f"Take-Profit: {decision['take_profit']:.2f}")
-            if decision.get('stop_loss'):
-                print(f"Stop-Loss: {decision['stop_loss']:.2f}")
+            
+            # Display daily bias
+            if 'daily_bias' in decision:
+                daily = decision['daily_bias']
+                print(f"\nDaily Bias:")
+                print(f"Direction: {'BULLISH' if daily['direction'] > 0 else 'BEARISH' if daily['direction'] < 0 else 'NEUTRAL'}")
+                print(f"Confidence: {daily['confidence']*100:.1f}%")
+                if daily['key_levels']:
+                    print("Key Levels to Watch:")
+                    for level in daily['key_levels']:
+                        print(f"- {level}")
+            
+            # Display current position
+            if 'current_position' in decision:
+                pos = decision['current_position']
+                print(f"\nCurrent Position:")
+                print(f"Position: {'LONG' if pos['position'] > 0 else 'SHORT' if pos['position'] < 0 else 'NEUTRAL'}")
+                print(f"Size: {abs(pos['position']):.2f}")
+                print(f"Confidence: {pos['confidence']*100:.1f}%")
+                if pos.get('take_profit'):
+                    print(f"Take-Profit: {pos['take_profit']:.2f}")
+                if pos.get('stop_loss'):
+                    print(f"Stop-Loss: {pos['stop_loss']:.2f}")
+            
             print(f"\nReasoning:\n{decision['reasoning']}")
             
         except Exception as e:
