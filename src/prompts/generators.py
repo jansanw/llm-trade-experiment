@@ -319,6 +319,7 @@ class PromptFVG(BasePromptGenerator):
                 additional_context: Optional[Dict] = None) -> str:
         current_price = min1_df.iloc[-1]['close']
         current_time = min1_df.iloc[-1]['timestamp'].strftime('%Y-%m-%d %H:%M')
+        # test
         
         prompt = "You are a professional futures trader specializing in ICT concepts and market structure analysis.\n\n"
         prompt += f"Current Time: {current_time}\n"
