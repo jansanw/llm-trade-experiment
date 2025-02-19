@@ -52,7 +52,7 @@ def parse_args():
     )
     parser.add_argument(
         '--prompt-type',
-        choices=['v0', 'fvg'],
+        choices=['v0', 'fvg', 'raw'],
         default='fvg',
         help='Type of prompt generator to use'
     )
@@ -88,7 +88,12 @@ async def main():
         llm = DeepSeekProvider(api_key=api_key, dry_run=args.dry_run)
     
     # Initialize trading bot
-    bot = TradingBot(symbol=args.symbol, data_fetcher=data_fetcher, llm=llm)
+    bot = TradingBot(
+        symbol=args.symbol,
+        data_fetcher=data_fetcher,
+        llm=llm,
+        prompt_type=args.prompt_type
+    )
     
     if args.mode == "oneshot":
         # Get trading decision

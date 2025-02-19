@@ -6,6 +6,7 @@ import logging
 from src.llm.base import LLMProvider
 from src.data.market_data import MarketDataFetcher, MarketDataProvider
 from src.analysis.market_regime import MarketRegimeDetector, MarketRegime
+from src.prompts.generators import PromptV0, PromptFVG, PromptRaw
 
 class TradingBot:
     """Main trading bot class that coordinates LLM decisions with market data."""
@@ -13,7 +14,8 @@ class TradingBot:
     def __init__(self, symbol: str, data_fetcher, llm, 
                  max_position_size: float = 1.0,
                  min_confidence: float = 0.6,
-                 min_risk_reward: float = 1.5):
+                 min_risk_reward: float = 1.5,
+                 prompt_type: str = 'fvg'):
         """Initialize the trading bot.
         
         Args:
@@ -23,6 +25,7 @@ class TradingBot:
             max_position_size: Maximum position size (1.0 = 100%)
             min_confidence: Minimum confidence required to take a trade
             min_risk_reward: Minimum risk/reward ratio required
+            prompt_type: Type of prompt generator to use ('v0', 'fvg', or 'raw')
         """
         self.symbol = symbol
         self.data_fetcher = data_fetcher
@@ -32,6 +35,16 @@ class TradingBot:
         self.min_risk_reward = min_risk_reward
         self.regime_detector = MarketRegimeDetector()
         self.logger = logging.getLogger(__name__)
+        
+        # Set prompt generator based on type
+        if prompt_type == 'v0':
+            self.llm.prompt_generator = PromptV0()
+        elif prompt_type == 'fvg':
+            self.llm.prompt_generator = PromptFVG()
+        elif prompt_type == 'raw':
+            self.llm.prompt_generator = PromptRaw()
+        else:
+            raise ValueError(f"Invalid prompt type: {prompt_type}")
         
     def _adjust_for_regime(self, decision: dict, regime_info: dict) -> dict:
         """Adjust trading decision based on market regime.

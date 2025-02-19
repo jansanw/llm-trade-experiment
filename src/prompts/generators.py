@@ -496,3 +496,84 @@ class PromptFVG(BasePromptGenerator):
         prompt += f"Note: take_profit and stop_loss should be absolute price levels based on the current price of {current_price:.2f}"
         
         return prompt 
+
+class PromptRaw(BasePromptGenerator):
+    """Simple prompt generator that provides raw OHLCV data in a clean format."""
+    
+    def _format_candles(self, df: pd.DataFrame, timeframe: str, num_candles: int = 30) -> str:
+        """Format the last n candles into a clean tabular format."""
+        # Get the last n candles
+        recent = df.tail(num_candles).copy()
+        
+        # Reset index to get timestamp as a column
+        recent = recent.reset_index()
+        
+        # Format timestamp
+        recent['timestamp'] = recent['timestamp'].dt.strftime('%Y-%m-%d %H:%M')
+        
+        # Round values to 2 decimal places for cleaner output
+        for col in ['open', 'high', 'low', 'close']:
+            recent[col] = recent[col].round(2)
+        
+        # Format volume to millions/thousands for readability
+        recent['volume'] = recent['volume'].apply(lambda x: f"{x/1e6:.1f}M" if x > 1e6 else f"{x/1e3:.1f}K")
+        
+        # Create table header
+        header = f"\n{timeframe} Timeframe (Last {num_candles} Candles):\n"
+        header += "Timestamp            | Open   | High   | Low    | Close  | Volume\n"
+        header += "-" * 65 + "\n"
+        
+        # Format each row
+        rows = []
+        for _, row in recent.iterrows():
+            rows.append(f"{row['timestamp']} | {row['open']:<6} | {row['high']:<6} | {row['low']:<6} | {row['close']:<6} | {row['volume']}")
+        
+        return header + "\n".join(rows)
+    
+    def generate(self, hourly_df: pd.DataFrame, min15_df: pd.DataFrame, 
+                min5_df: pd.DataFrame, min1_df: pd.DataFrame, 
+                additional_context: Optional[Dict] = None) -> str:
+        """Generate a prompt with raw OHLCV data."""
+        current_price = min1_df.iloc[-1]['close']
+        current_time = pd.to_datetime(min1_df.iloc[-1]['timestamp']).strftime('%Y-%m-%d %H:%M')
+        
+        prompt = "You are a professional futures trader. Analyze the following raw market data and provide a trading decision.\n\n"
+        prompt += f"Current Time: {current_time}\n"
+        prompt += f"Current Price: {current_price:.2f}\n\n"
+        prompt += "Raw Market Data:"
+        
+        # Add data for each timeframe
+        prompt += self._format_candles(hourly_df, "1-Hour", 30)
+        prompt += "\n"
+        prompt += self._format_candles(min15_df, "15-Minute", 30)
+        prompt += "\n"
+        prompt += self._format_candles(min5_df, "5-Minute", 30)
+        prompt += "\n"
+        prompt += self._format_candles(min1_df, "1-Minute", 30)
+        
+        if additional_context:
+            prompt += f"\n\nAdditional Context:\n{additional_context}\n"
+        
+        prompt += "\nBased on the above market data, provide a detailed trading plan with both daily and current bias:\n"
+        prompt += "1. Daily Bias:\n"
+        prompt += "   - Direction (-1.0 for bearish to 1.0 for bullish)\n"
+        prompt += "   - Confidence (0.0 to 1.0)\n"
+        prompt += "   - Key levels to watch for the day\n"
+        prompt += "2. Current Position:\n"
+        prompt += "   - Position (-1.0 for full short to 1.0 for full long)\n"
+        prompt += "   - Confidence (0.0 to 1.0)\n"
+        prompt += "   - Take-profit price - use nearest significant resistance for longs or support for shorts\n"
+        prompt += "   - Stop-loss price - use market structure (swings/FVGs) to define invalidation level\n"
+        prompt += "3. Detailed reasoning including:\n"
+        prompt += "   - How daily bias influences current position\n"
+        prompt += "   - Primary market structure levels being used\n"
+        prompt += "   - How the multi-timeframe trend aligns with the trade\n"
+        prompt += "   - Volume confirmation/concerns\n"
+        prompt += "   - Risk:reward ratio justification\n\n"
+        prompt += "Format your response as a JSON object with keys:\n"
+        prompt += "- daily_bias: {direction, confidence, key_levels: []}\n"
+        prompt += "- current_position: {position, confidence, take_profit, stop_loss}\n"
+        prompt += "- reasoning: {daily_context, levels_analysis, trend_alignment, volume_analysis, risk_reward}\n"
+        prompt += f"Note: take_profit and stop_loss should be absolute price levels based on the current price of {current_price:.2f}"
+        
+        return prompt 
