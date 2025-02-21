@@ -39,6 +39,9 @@ class YFinanceProvider(MarketDataProvider):
         self.symbols_map = {
             "MNQ": "MNQ=F",  # Micro E-mini Nasdaq-100 Futures
             "SPY": "SPY",    # S&P 500 ETF
+            "QQQ": "QQQ",    # Nasdaq-100 ETF
+            "IWM": "IWM",    # Russell 2000 ETF
+            "DIA": "DIA",    # Dow Jones ETF
             # Add more mappings as needed
         }
         self.nyse = get_calendar('NYSE')  # NYSE calendar for market hours
@@ -58,6 +61,8 @@ class YFinanceProvider(MarketDataProvider):
             
             # Map symbol if needed
             yf_symbol = self.symbols_map.get(symbol, symbol)
+            self.logger.info(f"Using yfinance symbol: {yf_symbol}")
+            
             ticker = yf.Ticker(yf_symbol)
             
             # Get 1-minute data with timeout
@@ -72,11 +77,15 @@ class YFinanceProvider(MarketDataProvider):
             except asyncio.TimeoutError:
                 self.logger.error(f"Timeout fetching 1m data for {symbol}")
                 raise ValueError("Data fetch timed out")
+            except Exception as e:
+                self.logger.error(f"Error during yfinance API call: {str(e)}")
+                raise ValueError(f"yfinance API error: {str(e)}")
                 
             self.logger.debug(f"Got {len(df)} 1m bars")
             
             if len(df) == 0:
-                raise ValueError(f"No data available for {symbol}")
+                self.logger.error(f"Empty dataframe returned for {symbol} ({yf_symbol})")
+                raise ValueError(f"No data available for {symbol} ({yf_symbol})")
                 
             # Resample to target interval if needed
             if interval != "1m":
@@ -107,8 +116,8 @@ class YFinanceProvider(MarketDataProvider):
             return df
             
         except Exception as e:
-            self.logger.error(f"Error fetching {interval} data: {str(e)}")
-            raise ValueError(f"No data available for {symbol}")
+            self.logger.error(f"Error fetching {interval} data for {symbol}: {str(e)}")
+            raise ValueError(f"Failed to fetch {interval} data for {symbol}: {str(e)}")
 
     async def fetch_multi_timeframe_data(
         self,
