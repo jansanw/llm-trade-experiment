@@ -9,6 +9,12 @@ from pandas_market_calendars import get_calendar
 import logging
 import numpy as np
 import asyncio
+import os
+from polygon import RESTClient
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 class MarketDataProvider(ABC):
     """Abstract base class for market data providers."""
@@ -31,6 +37,159 @@ class MarketDataProvider(ABC):
             Each DataFrame has columns: [timestamp, open, high, low, close, volume]
         """
         pass
+
+class PolygonProvider(MarketDataProvider):
+    """Polygon.io implementation for futures and stocks."""
+    
+    def __init__(self):
+        self.symbols_map = {
+            "MNQ": "MNQ",    # Micro E-mini Nasdaq-100 Futures
+            "SPY": "SPY",    # S&P 500 ETF
+            "QQQ": "QQQ",    # Nasdaq-100 ETF
+            "IWM": "IWM",    # Russell 2000 ETF
+            "DIA": "DIA",    # Dow Jones ETF
+            # Add more mappings as needed
+        }
+        self.nyse = get_calendar('NYSE')  # NYSE calendar for market hours
+        self.logger = logging.getLogger(__name__)
+        self.timeout = 20  # 20 second timeout
+        self.api_key = os.getenv("POLYGON_API_KEY")
+        
+        if not self.api_key:
+            self.logger.error("POLYGON_API_KEY not found in environment variables")
+            raise ValueError("POLYGON_API_KEY not found in environment variables")
+            
+        self.client = RESTClient(self.api_key)
+        
+    async def get_candles(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None
+    ) -> pd.DataFrame:
+        """Get OHLCV candles for symbol."""
+        try:
+            self.logger.info(f"Fetching {interval} data for {symbol} from {start_time} to {end_time}")
+            
+            # Map symbol if needed
+            polygon_symbol = self.symbols_map.get(symbol, symbol)
+            self.logger.info(f"Using polygon symbol: {polygon_symbol}")
+            
+            # Convert timeframes to Polygon's format
+            timespan_mapping = {
+                "1m": "minute",
+                "5m": "minute",
+                "15m": "minute",
+                "1h": "hour"
+            }
+            
+            multiplier_mapping = {
+                "1m": 1,
+                "5m": 5,
+                "15m": 15,
+                "1h": 1
+            }
+            
+            timespan = timespan_mapping.get(interval, "minute")
+            multiplier = multiplier_mapping.get(interval, 1)
+            
+            # Format start and end timestamps for API
+            if start_time is None:
+                start_time = (datetime.now() - timedelta(days=7))
+            
+            if end_time is None:
+                end_time = datetime.now()
+                
+            # Ensure timestamps are in the correct format
+            start_time_str = start_time.strftime('%Y-%m-%d')
+            end_time_str = end_time.strftime('%Y-%m-%d')
+            
+            # Make the API call
+            try:
+                aggs = await asyncio.wait_for(
+                    asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.client.get_aggs(
+                            ticker=polygon_symbol,
+                            multiplier=multiplier,
+                            timespan=timespan,
+                            from_=start_time_str,
+                            to=end_time_str,
+                            limit=50000
+                        )
+                    ),
+                    timeout=self.timeout
+                )
+                
+                # Convert to DataFrame
+                df = pd.DataFrame([{
+                    'timestamp': datetime.fromtimestamp(agg.timestamp / 1000, tz=pytz.timezone('US/Eastern')),
+                    'open': agg.open,
+                    'high': agg.high,
+                    'low': agg.low,
+                    'close': agg.close,
+                    'volume': agg.volume
+                } for agg in aggs])
+                
+            except asyncio.TimeoutError:
+                self.logger.error(f"Timeout fetching {interval} data for {symbol}")
+                raise ValueError("Data fetch timed out")
+            except Exception as e:
+                self.logger.error(f"Error during polygon API call: {str(e)}")
+                raise ValueError(f"Polygon API error: {str(e)}")
+                
+            self.logger.debug(f"Got {len(df)} {interval} bars")
+            
+            if len(df) == 0:
+                self.logger.error(f"Empty dataframe returned for {symbol} ({polygon_symbol})")
+                raise ValueError(f"No data available for {symbol} ({polygon_symbol})")
+                
+            # Ensure dataframe is sorted by timestamp
+            df = df.sort_values('timestamp')
+                
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching {interval} data for {symbol}: {str(e)}")
+            raise ValueError(f"Failed to fetch {interval} data for {symbol}: {str(e)}")
+
+    async def fetch_multi_timeframe_data(
+        self,
+        symbol: str,
+        end_time: Optional[datetime] = None
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """Fetch data from Polygon.io."""
+        self.logger.info(f"Fetching data for {symbol}")
+        
+        # Get current time and look back 14 days
+        now = datetime.now(pytz.timezone('US/Eastern'))
+        if end_time is None:
+            end_time = now
+        elif not end_time.tzinfo:
+            end_time = pytz.timezone('US/Eastern').localize(end_time)
+            
+        # Calculate start time (14 days back)
+        start_time = end_time - timedelta(days=14)
+        
+        try:
+            # Fetch data for each timeframe directly
+            df_1m = await self.get_candles(symbol, "1m", start_time, end_time)
+            df_5m = await self.get_candles(symbol, "5m", start_time, end_time)
+            df_15m = await self.get_candles(symbol, "15m", start_time, end_time)
+            df_1h = await self.get_candles(symbol, "1h", start_time, end_time)
+            
+            # Take last 100 bars for each timeframe
+            df_1m = df_1m.tail(100)
+            df_5m = df_5m.tail(100)
+            df_15m = df_15m.tail(100)
+            df_1h = df_1h.tail(100)
+            
+            return df_1h, df_15m, df_5m, df_1m
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching data: {str(e)}")
+            raise ValueError(f"Failed to fetch data for {symbol}: {str(e)}")
 
 class YFinanceProvider(MarketDataProvider):
     """YFinance implementation for futures and stocks."""
@@ -278,7 +437,7 @@ class MarketDataFetcher:
         self.symbol = symbol
         self.logger = logging.getLogger(__name__)
         self.et_tz = pytz.timezone('US/Eastern')
-        self.provider = YFinanceProvider()
+        self.provider = PolygonProvider()
         
     async def get_candles(
         self,
@@ -331,4 +490,4 @@ class MarketDataFetcher:
         """Get data provider for asset type."""
         if asset_type == "crypto":
             return CryptoProvider()
-        return YFinanceProvider() 
+        return PolygonProvider() 

@@ -23,14 +23,23 @@ A trading bot that uses Large Language Models (LLM) to make trading decisions ba
    DEEPSEEK_API_KEY=your_key_here
    OPENAI_API_KEY=your_key_here
    ANTHROPIC_API_KEY=your_key_here
+   POLYGON_API_KEY=your_polygon_io_key_here
    ```
+
+### Getting a Polygon.io API Key
+
+This project uses Polygon.io for market data. To get an API key:
+
+1. Sign up at [Polygon.io](https://polygon.io/dashboard/signup)
+2. Choose a plan (they offer a free tier with limited requests)
+3. Once registered, get your API key from the dashboard
+4. Add the key to your `.env` file as shown above
 
 ## Usage
 
 The bot can be run in several modes:
 
 ```bash
-
 # Single analysis
 python -m src.main --mode oneshot --symbol QQQ --prompt-type fvg
 python -m src.main --mode oneshot --symbol QQQ --prompt-type raw

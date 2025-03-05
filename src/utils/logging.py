@@ -29,5 +29,5 @@ def setup_logging():
     logging.getLogger('src.llm.deepseek_provider').setLevel(logging.DEBUG)
     logging.getLogger('urllib3').setLevel(logging.INFO)  # Reduce noise from HTTP client
     logging.getLogger('asyncio').setLevel(logging.INFO)  # Reduce noise from asyncio
-    logging.getLogger('yfinance').setLevel(logging.INFO)  # Reduce noise from yfinance
+    logging.getLogger('polygon').setLevel(logging.INFO)  # Reduce noise from polygon
     logging.getLogger('peewee').setLevel(logging.INFO)  # Reduce noise from peewee 

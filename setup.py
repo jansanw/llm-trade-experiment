@@ -10,7 +10,7 @@ setup(
         "anthropic>=0.8.1",
         "pandas>=2.2.0",
         "numpy>=1.26.3",
-        "yfinance>=0.2.36",
+        "polygon-api-client>=1.14.4",
         "plotly>=5.18.0",
         "dash>=2.14.2",
         "dash-bootstrap-components>=1.5.0",

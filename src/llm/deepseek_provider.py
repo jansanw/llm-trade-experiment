@@ -13,7 +13,7 @@ if platform.system() == 'Windows':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # Configure logging to ignore DEBUG from other libraries
-logging.getLogger('yfinance').setLevel(logging.WARNING)
+logging.getLogger('polygon').setLevel(logging.WARNING)
 logging.getLogger('peewee').setLevel(logging.WARNING)
 
 class DeepSeekProvider(LLMProvider):
