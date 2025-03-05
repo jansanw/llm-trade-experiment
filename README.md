@@ -30,14 +30,16 @@ A trading bot that uses Large Language Models (LLM) to make trading decisions ba
 The bot can be run in several modes:
 
 ```bash
+
+# Single analysis
+python -m src.main --mode oneshot --symbol QQQ --prompt-type fvg
+python -m src.main --mode oneshot --symbol QQQ --prompt-type raw
+
 # Live trading mode
 python -m src.main --mode live --symbol SPY
 
 # Backtest mode
 python -m src.main --mode backtest --symbol QQQ --start-date 2025-01-12 --end-date 2025-01-26 --provider deepseek
-
-# Single analysis
-python -m src.main --mode oneshot --symbol QQQ --prompt-type fvg
 
 # Dashboard mode (default)
 python -m src.main --mode dashboard --symbol SPY

@@ -105,10 +105,17 @@ class DeepSeekProvider(LLMProvider):
         if self.dry_run:
             self.logger.info("Dry run mode - skipping API call")
             return {
-                "position": 0.0,
-                "confidence": 0.0,
-                "take_profit": None,
-                "stop_loss": None,
+                "current_position": {
+                    "position": 0.0,
+                    "confidence": 0.0,
+                    "take_profit": None,
+                    "stop_loss": None
+                },
+                "daily_bias": {
+                    "direction": 0.0,
+                    "confidence": 0.0,
+                    "key_levels": []
+                },
                 "reasoning": "Dry run mode - no API call made"
             }
         
@@ -164,43 +171,79 @@ class DeepSeekProvider(LLMProvider):
                         # Parse the response
                         decision = json.loads(json_str)
                         
-                        # Format the reasoning if it's a dictionary
-                        if isinstance(decision.get('reasoning'), dict):
-                            decision['reasoning'] = self._format_reasoning(decision['reasoning'])
+                        # Validate decision format first
+                        required_sections = {
+                            "daily_bias": ["direction", "confidence", "key_levels"],
+                            "current_position": ["position", "confidence", "take_profit", "stop_loss"],
+                            "reasoning": ["daily_context", "levels_analysis", "trend_alignment", "volume_analysis", "risk_reward"]
+                        }
                         
-                        # Validate decision format
-                        required_keys = ["position", "confidence", "take_profit", "stop_loss", "reasoning"]
-                        if not all(key in decision for key in required_keys):
-                            raise ValueError(f"Missing required keys in decision: {required_keys}")
+                        for section, required_keys in required_sections.items():
+                            if section not in decision:
+                                raise ValueError(f"Missing required section: {section}")
+                            if not all(key in decision[section] for key in required_keys):
+                                raise ValueError(f"Missing required keys in {section}: {required_keys}")
                         
                         # Validate value ranges
-                        if not -1.0 <= float(decision["position"]) <= 1.0:
-                            raise ValueError(f"Position value out of range: {decision['position']}")
-                        if not 0.0 <= float(decision["confidence"]) <= 1.0:
-                            raise ValueError(f"Confidence value out of range: {decision['confidence']}")
+                        daily_bias = decision["daily_bias"]
+                        current_pos = decision["current_position"]
+                        
+                        if not -1.0 <= float(daily_bias["direction"]) <= 1.0:
+                            raise ValueError(f"Daily bias direction out of range: {daily_bias['direction']}")
+                        if not 0.0 <= float(daily_bias["confidence"]) <= 1.0:
+                            raise ValueError(f"Daily bias confidence out of range: {daily_bias['confidence']}")
+                            
+                        if not -1.0 <= float(current_pos["position"]) <= 1.0:
+                            raise ValueError(f"Current position value out of range: {current_pos['position']}")
+                        if not 0.0 <= float(current_pos["confidence"]) <= 1.0:
+                            raise ValueError(f"Current position confidence out of range: {current_pos['confidence']}")
                         
                         # Validate take-profit and stop-loss are numeric
                         try:
-                            decision["take_profit"] = float(decision["take_profit"])
-                            decision["stop_loss"] = float(decision["stop_loss"])
+                            current_pos["take_profit"] = float(current_pos["take_profit"])
+                            current_pos["stop_loss"] = float(current_pos["stop_loss"])
                         except (ValueError, TypeError):
                             raise ValueError("take_profit and stop_loss must be numeric values")
                         
                         # Validate take-profit and stop-loss make sense for the position
                         current_price = float(min1_df.iloc[-1]['close'])
-                        if decision["position"] > 0:  # Long position
-                            if decision["take_profit"] <= current_price:
+                        if current_pos["position"] > 0:  # Long position
+                            if current_pos["take_profit"] <= current_price:
                                 raise ValueError("take_profit must be above current price for long positions")
-                            if decision["stop_loss"] >= current_price:
+                            if current_pos["stop_loss"] >= current_price:
                                 raise ValueError("stop_loss must be below current price for long positions")
-                        elif decision["position"] < 0:  # Short position
-                            if decision["take_profit"] >= current_price:
+                        elif current_pos["position"] < 0:  # Short position
+                            if current_pos["take_profit"] >= current_price:
                                 raise ValueError("take_profit must be below current price for short positions")
-                            if decision["stop_loss"] <= current_price:
+                            if current_pos["stop_loss"] <= current_price:
                                 raise ValueError("stop_loss must be above current price for short positions")
                         
-                        self.logger.info(f"Final decision: {decision}")
-                        return decision
+                        # Format the reasoning after validation
+                        reasoning_dict = decision['reasoning']
+                        formatted_reasoning = []
+                        for key, value in reasoning_dict.items():
+                            # Convert key from snake_case to Title Case
+                            title = key.replace('_', ' ').title()
+                            formatted_reasoning.append(f"{title}: {value}")
+                        
+                        # Return the decision in the format expected by the trading bot
+                        final_decision = {
+                            "current_position": {
+                                "position": float(current_pos["position"]),
+                                "confidence": float(current_pos["confidence"]),
+                                "take_profit": float(current_pos["take_profit"]),
+                                "stop_loss": float(current_pos["stop_loss"])
+                            },
+                            "daily_bias": {
+                                "direction": float(daily_bias["direction"]),
+                                "confidence": float(daily_bias["confidence"]),
+                                "key_levels": daily_bias["key_levels"]
+                            },
+                            "reasoning": "\n".join(formatted_reasoning)
+                        }
+                        
+                        self.logger.info(f"Final decision: {final_decision}")
+                        return final_decision
                         
                     except json.JSONDecodeError as e:
                         self.logger.error(f"Failed to parse JSON response: {e}")
@@ -210,10 +253,17 @@ class DeepSeekProvider(LLMProvider):
         except Exception as e:
             self.logger.error(f"Error getting trading decision: {str(e)}")
             return {
-                "position": 0.0,
-                "confidence": 0.0,
-                "take_profit": None,
-                "stop_loss": None,
+                "current_position": {
+                    "position": 0.0,
+                    "confidence": 0.0,
+                    "take_profit": None,
+                    "stop_loss": None
+                },
+                "daily_bias": {
+                    "direction": 0.0,
+                    "confidence": 0.0,
+                    "key_levels": []
+                },
                 "reasoning": f"Error getting trading decision: {str(e)}"
             }
 
