@@ -12,7 +12,7 @@ from src.llm.mock_provider import MockProvider
 from src.data.market_data import MarketDataFetcher
 from src.backtest.engine import BacktestEngine
 from src.dashboard.app import Dashboard
-from src.prompts.generators import PromptV0, PromptFVG
+from src.prompts.generators import PromptV0, PromptFVG, PromptRaw, PromptRawUniform
 from src.utils.logging import setup_logging
 
 def parse_args():
@@ -52,7 +52,7 @@ def parse_args():
     )
     parser.add_argument(
         '--prompt-type',
-        choices=['v0', 'fvg', 'raw'],
+        choices=['v0', 'fvg', 'raw', 'uniform'],
         default='fvg',
         help='Type of prompt generator to use'
     )

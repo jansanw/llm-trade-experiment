@@ -6,7 +6,7 @@ import logging
 from src.llm.base import LLMProvider
 from src.data.market_data import MarketDataFetcher, MarketDataProvider
 from src.analysis.market_regime import MarketRegimeDetector, MarketRegime
-from src.prompts.generators import PromptV0, PromptFVG, PromptRaw
+from src.prompts.generators import PromptV0, PromptFVG, PromptRaw, PromptRawUniform
 
 class TradingBot:
     """Main trading bot class that coordinates LLM decisions with market data."""
@@ -25,7 +25,7 @@ class TradingBot:
             max_position_size: Maximum position size (1.0 = 100%)
             min_confidence: Minimum confidence required to take a trade
             min_risk_reward: Minimum risk/reward ratio required
-            prompt_type: Type of prompt generator to use ('v0', 'fvg', or 'raw')
+            prompt_type: Type of prompt generator to use ('v0', 'fvg', 'raw', or 'uniform')
         """
         self.symbol = symbol
         self.data_fetcher = data_fetcher
@@ -43,6 +43,8 @@ class TradingBot:
             self.llm.prompt_generator = PromptFVG()
         elif prompt_type == 'raw':
             self.llm.prompt_generator = PromptRaw()
+        elif prompt_type == 'uniform':
+            self.llm.prompt_generator = PromptRawUniform(num_candles=60)
         else:
             raise ValueError(f"Invalid prompt type: {prompt_type}")
         

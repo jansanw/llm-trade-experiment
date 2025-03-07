@@ -577,3 +577,96 @@ class PromptRaw(BasePromptGenerator):
         prompt += f"Note: take_profit and stop_loss should be absolute price levels based on the current price of {current_price:.2f}"
         
         return prompt 
+
+class PromptRawUniform(BasePromptGenerator):
+    """
+    Simple prompt generator that provides raw OHLC data in a clean format with
+    a uniform number of candles across all timeframes.
+    """
+    
+    def __init__(self, num_candles: int = 60):
+        """
+        Initialize the prompt generator with a specified number of candles.
+        
+        Args:
+            num_candles: Number of candles to include for each timeframe (default: 60)
+        """
+        self.num_candles = num_candles
+    
+    def _format_candles(self, df: pd.DataFrame, timeframe: str) -> str:
+        """Format the last n candles into a clean tabular format."""
+        # Get the last n candles
+        recent = df.tail(self.num_candles).copy()
+        
+        # Reset index to get timestamp as a column
+        if 'timestamp' not in recent.columns:
+            recent = recent.reset_index()
+        
+        # Format timestamp
+        recent['timestamp'] = pd.to_datetime(recent['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
+        
+        # Round values to 2 decimal places for cleaner output
+        for col in ['open', 'high', 'low', 'close']:
+            recent[col] = recent[col].round(2)
+        
+        # Create table header
+        header = f"\n{timeframe} Timeframe (Last {self.num_candles} Candles):\n"
+        header += "Timestamp            | Open   | High   | Low    | Close  \n"
+        header += "-" * 58 + "\n"
+        
+        # Format each row
+        rows = []
+        for _, row in recent.iterrows():
+            rows.append(f"{row['timestamp']} | {row['open']:<6} | {row['high']:<6} | {row['low']:<6} | {row['close']:<6}")
+        
+        return header + "\n".join(rows)
+    
+    def generate(self, hourly_df: pd.DataFrame, min15_df: pd.DataFrame, 
+                min5_df: pd.DataFrame, min1_df: pd.DataFrame, 
+                additional_context: Optional[Dict] = None) -> str:
+        """Generate a prompt with raw OHLC data with uniform number of candles."""
+        current_price = min1_df.iloc[-1]['close']
+        current_time = pd.to_datetime(min1_df.iloc[-1]['timestamp']).strftime('%Y-%m-%d %H:%M')
+        
+        prompt = f"""You are a professional trader analyzing multi-timeframe market data.
+
+Current Time: {current_time}
+Current Price: {current_price:.2f}
+
+The following data shows price action across multiple timeframes.
+Each timeframe contains exactly {self.num_candles} candles.
+"""
+        
+        # Add data for each timeframe
+        prompt += self._format_candles(hourly_df, "1-Hour")
+        prompt += "\n"
+        prompt += self._format_candles(min15_df, "15-Minute")
+        prompt += "\n"
+        prompt += self._format_candles(min5_df, "5-Minute")
+        prompt += "\n"
+        prompt += self._format_candles(min1_df, "1-Minute")
+        
+        if additional_context:
+            prompt += f"\n\nAdditional Context:\n{additional_context}\n"
+        
+        prompt += """
+Based on the above market data, provide a trading analysis with:
+
+1. Daily Bias:
+   - Direction (-1.0 for bearish to 1.0 for bullish)
+   - Confidence (0.0 to 1.0)
+   - Key levels to watch
+
+2. Current Position:
+   - Position (-1.0 for full short to 1.0 for full long)
+   - Confidence (0.0 to 1.0)
+   - Take-profit price
+   - Stop-loss price
+
+3. Reasoning:
+   - Key patterns observed across timeframes
+   - How different timeframes support your decision
+   - Risk management rationale
+"""
+        
+        return prompt 

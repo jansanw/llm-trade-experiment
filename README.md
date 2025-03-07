@@ -64,6 +64,12 @@ python -m src.main --mode oneshot --symbol SPY --prompt-type fvg
 
 # Use basic OHLCV analysis
 python -m src.main --mode oneshot --symbol SPY --prompt-type v0
+
+# Use raw candle data with standard formatting
+python -m src.main --mode oneshot --symbol SPY --prompt-type raw
+
+# Use uniform raw candle data (same number of candles across all timeframes)
+python -m src.main --mode oneshot --symbol SPY --prompt-type uniform
 ```
 
 ### Dry Run Mode
@@ -71,11 +77,8 @@ python -m src.main --mode oneshot --symbol SPY --prompt-type v0
 You can test the prompt generation without making API calls using the `--dry-run` flag:
 
 ```bash
-# Test FVG analysis prompt
-python -m src.main --mode oneshot --symbol SPY --prompt-type fvg --dry-run
-
-# Test basic OHLCV analysis prompt
-python -m src.main --mode oneshot --symbol SPY --prompt-type v0 --dry-run
+# Test uniform raw candle prompt
+python -m src.main --mode oneshot --symbol SPY --prompt-type uniform --dry-run
 ```
 
 This is useful for:
